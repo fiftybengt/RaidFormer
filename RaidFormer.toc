@@ -1,0 +1,20 @@
+## Interface: 30300
+## Title: RaidFormer
+## Notes: Automated raid forming: whisper parsing, auto invite, inspect + GearScore check, composition tracking and LFM announcements. /rf
+## Version: 1.0.0
+## Author: fifty
+## SavedVariables: RaidFormerDB
+
+Specs.lua
+Parse.lua
+Templates.lua
+GearScore.lua
+Comp.lua
+Inspect.lua
+Groups.lua
+Core.lua
+UI\Widgets.lua
+UI\Main.lua
+UI\Setup.lua
+UI\Formation.lua
+UI\Roster.lua
