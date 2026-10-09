@@ -13,12 +13,8 @@ end
 
 -- Raid/size/difficulty changed: optionally load the recommended formation and GS.
 local function RaidChanged()
-	local p = P()
-	if p.autoDefaults then
-		local roles, needs, buffs, caps = RF.DefaultFormation(p.raid, p.size, p.heroic)
-		p.roles, p.needs, p.buffs, p.caps = roles, needs, buffs, caps
-		p.minGS = RF.DefaultMinGS(p.raid, p.size, p.heroic)
-	end
+	-- only while on the recommended setup; a preset or your own edits are kept
+	RF.Core:RaidSettingsChanged()
 	Changed()
 end
 
@@ -99,6 +95,8 @@ local function Build(page)
 
 	w.autoDefaults = W.Check(page, "Load recommended formation on change", function(v) P().autoDefaults = v end)
 	w.autoDefaults:SetPoint("TOPLEFT", LEFT - 4, -126)
+	w.baseline = W.Label(page, "", "GameFontDisableSmall")
+	w.baseline:SetPoint("TOPLEFT", LEFT + 24, -146)
 
 	local myLabel = W.Label(page, "My spec:", "GameFontHighlightSmall")
 	myLabel:SetPoint("TOPLEFT", LEFT, -160)
@@ -139,11 +137,11 @@ local function Build(page)
 	gsLabel:SetPoint("TOPLEFT", RIGHT, -26)
 	w.minGS = W.EditBox(page, 50, true, function(text)
 		local n = tonumber(text)
-		if n then P().minGS = n end
+		if n then P().minGS = n; RF.Core:MarkEdited() end
 		Changed()
 	end, 4)
 	w.minGS:SetPoint("LEFT", gsLabel, "RIGHT", 10, 0)
-	w.gsSlider = W.Slider(page, 250, 3000, 6500, 50, function(v) P().minGS = v; Changed() end)
+	w.gsSlider = W.Slider(page, 250, 3000, 6500, 50, function(v) P().minGS = v; RF.Core:MarkEdited(); Changed() end)
 	w.gsSlider:SetPoint("TOPLEFT", RIGHT, -50)
 
 	local chLabel = W.Label(page, "Channels:", "GameFontHighlightSmall")
@@ -288,6 +286,7 @@ local function Refresh(page)
 	w.heroic:SetChecked(p.heroic)
 	if r.heroic then w.heroic:Enable(); w.normal:Enable() else w.heroic:Disable(); w.normal:Disable() end
 	w.autoDefaults:SetChecked(p.autoDefaults)
+	w.baseline:SetText(RF.Core:BaselineText())
 	local mySpec = RF.SPECS[RF.Core:MySpec()]
 	local myRole = mySpec and ((mySpec.role == "tank" or mySpec.role == "heal") and mySpec.role or "dps")
 	w.mySpec:SetValue(p.myRole, (ROLE_CHOICE_NAMES[myRole] or "?") .. (p.myRole and "" or " (talents)"))

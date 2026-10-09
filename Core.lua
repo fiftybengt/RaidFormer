@@ -67,6 +67,7 @@ function Core:DefaultProfile()
 		raidWarnOnJoin = false, raidWarnText = "g1 vh",
 		inspectTimeout = 180, autoKick = true, raidUpdates = true, rejectWrongSpec = false,
 		requireInspect = true, remindInspect = true, showCount = false,
+		formationSource = "default", -- "default" (recommended), "preset:<name>" or "edited"
 	}
 end
 
@@ -661,6 +662,48 @@ function Core:SetSpec(name, specKey)
 	local need = self:NeedText()
 	Print(string.format("%s now counted as %s. Still need: %s", name, RF.SPECS[specKey].short, need ~= "" and need or "nothing"))
 	self:Refresh()
+end
+
+---------------------------------------------------------------------------
+-- Formation baseline: recommended, a preset, or your own edits
+---------------------------------------------------------------------------
+
+-- Changing raid/size/difficulty only reloads the recommended setup while you're still on it.
+-- A loaded preset or your own edits are your baseline and stay as they are.
+function Core:MarkEdited()
+	if (RF.profile.formationSource or "default") == "default" then RF.profile.formationSource = "edited" end
+end
+
+function Core:LoadRecommended()
+	local p = RF.profile
+	p.roles, p.needs, p.buffs, p.caps = RF.DefaultFormation(p.raid, p.size, p.heroic)
+	p.minGS = RF.DefaultMinGS(p.raid, p.size, p.heroic)
+	p.formationSource = "default"
+end
+
+-- Raid, size or difficulty changed in the Setup tab.
+function Core:RaidSettingsChanged()
+	local p = RF.profile
+	if p.autoDefaults and (p.formationSource or "default") == "default" then self:LoadRecommended() end
+end
+
+function Core:LoadPreset(name)
+	local preset = RF.db.presets[name]
+	if not preset then return false end
+	local p = RF.profile
+	for k, v in pairs(RF.CopyTable(preset)) do p[k] = v end
+	p.buffs = {}
+	RF.SanitizeExtras(p)
+	p.formationSource = "preset:" .. name
+	Print("Preset loaded: " .. name .. " - changing raid/size now keeps it.")
+	return true
+end
+
+function Core:BaselineText()
+	local src = RF.profile.formationSource or "default"
+	if src == "default" then return "Based on: recommended for this raid" end
+	if src == "edited" then return "Based on: your edits (kept on raid change)" end
+	return "Based on: preset '" .. src:sub(8) .. "' (kept on raid change)"
 end
 
 -- Manual overrides from the Roster tab
