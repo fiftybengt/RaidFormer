@@ -16,15 +16,22 @@ Copy (or symlink) the `RaidFormer` folder into `World of Warcraft/Interface/AddO
    GearScore, one or more channels (plus Guild/Yell), seconds between posts and extras via
    the buttons `B+O+P RES`, `BOE RES`, `BOE+P RES`, `Link best achiev`.
    The preview shows exactly what will be posted, e.g.
-   `LFM TOC25N GS 5.3k+ need: rog, rsham, ppal, demo, hunt, 1 heal, 7 mdps / B+O+P RES / fast run - /w spec+gs`.
-   "Free text" (optional, up to 80 characters) goes right before `/w spec+gs`. If the line gets
+   `LFM TOC25N - GS 5.3k+ - Need: 2 heal, 5 dps - B+O+P RES - fast run - /w spec + GS`.
+   "Announcement style" (next to the preview) picks the look: Clean dashes (default),
+   Raid icons (`{skull} LFM TOC25N {skull} Need: ... {skull} ...`, icon selectable), Brackets
+   (`[TOC25N] LFM - [Need: ...] - ...`) or Need first (`TOC25N needs 2 heal, 5 dps - ...`).
+   "Free text" (optional, up to 80 characters) goes right before `/w spec + GS`. If the line gets
    longer than 255 characters, the need list is shortened (ending in "...") and your free text stays.
    Automatic whispers start with `[RaidFormer]` so players can tell an addon is answering;
    LFM posts, /raid messages and raid warnings don't.
    "Show 23/25 in the LFM line" (optional) puts the current raid count after the raid tag:
-   `LFM TOC25N 23/25 GS 5.3k+ ...`; it follows people joining and leaving.
-   Open roles are bundled: every role open -> `need: all`; melee and ranged both open ->
-   one `dps` count (e.g. `2 heal, 7 dps`).
+   `LFM TOC25N 23/25 - GS 5.3k+ ...`; it follows people joining and leaving.
+   What's needed: classes from your formation list are only named once they're all that's
+   left. Roles are counted with their reserved needs included; a role's count turns into its
+   names (e.g. `rsham`) when every open spot of it is reserved, and when every open spot in the
+   raid is reserved exactly the remaining needs are listed. Open roles are bundled: every role
+   open -> `Need: all`; melee and ranged both open -> one `dps` count. Over a raid:
+   `Need: all` -> `Need: 6 heal, 17 dps` -> `Need: rsham, 17 dps` -> `Need: rsham, rog`.
    Specs are abbreviated (rog, rsham, hpal, ppal, demo, hunt, boomy, rdru, disc, fmage,
    SPriest, ...) and players can use the same abbreviations when whispering. With several channels the message goes
    out to each in turn with a random 0.8-1.2s pause between them.

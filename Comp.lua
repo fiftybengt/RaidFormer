@@ -126,35 +126,68 @@ function Comp.CanAccept(profile, holders, specKey)
 	return true
 end
 
--- "rsham, 1 tank, 2 heal, 4 rdps" / "rsham, 2 heal, 7 dps" / "rsham, all"
+-- What the LFM line asks for. Classes from the formation list are only named once they are all
+-- that's left, so the line stays short while the raid is open to anyone:
+--  * roles are counted with their reserved needs included ("6 heal", not "rsham, 5 heal");
+--  * a role's count becomes its need names ("rsham") once every open spot of that role is reserved;
+--  * when every open spot in the raid is reserved, exactly the remaining needs are listed
+--    (that's also the only time needs fitting several roles, e.g. "any shaman", are named);
+--  * "all" / "N dps" bundle roles that are still shown as counts.
+-- Over a raid: "all" -> "6 heal, 17 dps" -> "rsham, 17 dps" -> "rsham, rog"
 function Comp.NeedString(profile, holders)
 	local counts = Comp.Count(profile, holders)
-	local parts = {}
-	-- spec/class needs that can only be one role already use up that role's open slots,
-	-- so "rsham, 5 heal" is shown as "rsham, 4 heal"
-	local reserved = {}
+	local open, totalOpen = {}, 0
+	for _, r in ipairs(RF.ROLES) do
+		open[r] = math.max(0, (profile.roles[r] or 0) - counts.role[r])
+		totalOpen = totalOpen + open[r]
+	end
+
+	local byRole, reserved, multi, totalMissing = {}, {}, {}, 0
 	for _, req in ipairs(Comp.Unmet(profile, counts)) do
-		parts[#parts + 1] = (req.missing > 1 and (req.missing .. "x ") or "") .. req.label
+		local label = (req.missing > 1 and (req.missing .. "x ") or "") .. req.label
+		totalMissing = totalMissing + req.missing
 		local onlyRole, n = nil, 0
 		for r in pairs(req.roles) do onlyRole = r; n = n + 1 end
-		if n == 1 then reserved[onlyRole] = (reserved[onlyRole] or 0) + req.missing end
-	end
-	local open = {}
-	for _, r in ipairs(RF.ROLES) do
-		open[r] = math.max(0, (profile.roles[r] or 0) - counts.role[r] - (reserved[r] or 0))
-	end
-	if open.tank > 0 and open.heal > 0 and open.mdps > 0 and open.rdps > 0 then
-		parts[#parts + 1] = "all" -- every role still open
-	else
-		if open.tank > 0 then parts[#parts + 1] = open.tank .. " " .. RF.ROLE_SHORT.tank end
-		if open.heal > 0 then parts[#parts + 1] = open.heal .. " " .. RF.ROLE_SHORT.heal end
-		if open.mdps > 0 and open.rdps > 0 then
-			parts[#parts + 1] = (open.mdps + open.rdps) .. " dps" -- melee and ranged both open
-		elseif open.mdps > 0 then
-			parts[#parts + 1] = open.mdps .. " " .. RF.ROLE_SHORT.mdps
-		elseif open.rdps > 0 then
-			parts[#parts + 1] = open.rdps .. " " .. RF.ROLE_SHORT.rdps
+		if n == 1 then
+			byRole[onlyRole] = byRole[onlyRole] or {}
+			table.insert(byRole[onlyRole], label)
+			reserved[onlyRole] = (reserved[onlyRole] or 0) + req.missing
+		else
+			multi[#multi + 1] = label
 		end
+	end
+
+	local parts = {}
+	local function add(list)
+		for _, label in ipairs(list or {}) do parts[#parts + 1] = label end
+	end
+
+	if totalOpen > 0 and totalMissing >= totalOpen then
+		-- every open spot is reserved: name exactly who we still need
+		for _, r in ipairs(RF.ROLES) do add(byRole[r]) end
+		add(multi)
+		return table.concat(parts, ", "), counts
+	end
+
+	local named = {}
+	for _, r in ipairs(RF.ROLES) do
+		named[r] = open[r] > 0 and (reserved[r] or 0) >= open[r]
+	end
+	if open.tank > 0 and open.heal > 0 and open.mdps > 0 and open.rdps > 0
+		and not (named.tank or named.heal or named.mdps or named.rdps) then
+		return "all", counts -- every role still open to anyone
+	end
+	local function role(r)
+		if open[r] == 0 then return end
+		if named[r] then add(byRole[r]) else parts[#parts + 1] = open[r] .. " " .. RF.ROLE_SHORT[r] end
+	end
+	role("tank")
+	role("heal")
+	if open.mdps > 0 and open.rdps > 0 and not named.mdps and not named.rdps then
+		parts[#parts + 1] = (open.mdps + open.rdps) .. " dps" -- melee and ranged both open
+	else
+		role("mdps")
+		role("rdps")
 	end
 	return table.concat(parts, ", "), counts
 end
@@ -169,35 +202,65 @@ function Comp.FormatGS(gs)
 	return tostring(gs)
 end
 
+-- Announcement styles (Setup tab). The default is "dashes".
+RF.LFM_STYLES = {
+	{ key = "dashes", name = "Clean dashes" },
+	{ key = "icons", name = "Raid icons" },
+	{ key = "brackets", name = "Brackets" },
+	{ key = "needfirst", name = "Need first" },
+}
+-- raid target icons the client draws in chat when written as {name}
+RF.LFM_ICONS = { "star", "circle", "diamond", "triangle", "moon", "square", "cross", "skull" }
+
+local function Join(list, sep)
+	local out = {}
+	for _, part in ipairs(list) do
+		if part and part ~= "" then out[#out + 1] = part end
+	end
+	return table.concat(out, sep)
+end
+
+-- One LFM line in the chosen style. n = need text, f = free text (both may be shortened).
+local function Format(profile, tag, count, gs, n, extras, f)
+	local style = profile.lfmStyle
+	local suffix = "/w spec + GS"
+	local needSeg = (n ~= "") and ("Need: " .. n) or "Last spot!"
+	if style == "icons" then
+		local icon = "{" .. (profile.lfmIcon or "skull") .. "}"
+		return icon .. " " .. Join({ Join({ "LFM", tag, count }, " "), needSeg, gs, extras, f, suffix }, " " .. icon .. " ")
+	elseif style == "brackets" then
+		return Join({ Join({ "[" .. tag .. "] LFM", count }, " "), "[" .. needSeg .. "]", gs, Join({ extras, f }, ", "), suffix }, " - ")
+	elseif style == "needfirst" then
+		local wants = (n == "all") and "ALL" or ((n ~= "") and n or "a last spot")
+		return Join({ Join({ tag .. " needs " .. wants, count and ("(" .. count .. ")") }, " "), gs, extras, f, suffix }, " - ")
+	end
+	-- "dashes"
+	return Join({ Join({ "LFM", tag, count }, " "), gs, needSeg, extras, f, suffix }, " - ")
+end
+
 -- Full LFM line, kept within the 255 character chat limit.
 function Comp.BuildAnnouncement(profile, holders)
 	local tag = RF.RaidTag(profile.raid, profile.size, profile.heroic, profile.customName)
 	local need, counts = Comp.NeedString(profile, holders)
 	-- optional "23/25": everyone holding a spot against the raid size
-	local spots = profile.showCount and string.format(" %d/%d", counts.total, profile.size) or ""
-	local head = string.format("LFM %s%s GS %s+", tag, spots, Comp.FormatGS(profile.minGS))
-	local suffix = " - /w spec+gs"
+	local count = profile.showCount and string.format("%d/%d", counts.total, profile.size) or nil
+	local gs = "GS " .. Comp.FormatGS(profile.minGS) .. "+"
 	local function trim(s) return ((s or ""):gsub("^%s+", ""):gsub("%s+$", "")) end
-	-- never use "|" in chat: WoW treats it as an escape code and rejects the message (SafeChat)
 	local extras = trim(profile.extras)
-	local extrasPart = (extras ~= "") and (" / " .. extras) or ""
 	local freeText = trim(profile.freeText)
-	local body = (need ~= "") and (" need: " .. need) or " last spot!"
-	-- need list / reserves / your free text - /w spec+gs
-	local function build(b, f)
-		return RF.SafeChat(head .. b .. extrasPart .. ((f ~= "") and (" / " .. f) or "") .. suffix)
-	end
-	local msg = build(body, freeText)
+	-- never use "|" in chat: WoW treats it as an escape code and rejects the message (SafeChat)
+	local function build(n, f) return RF.SafeChat(Format(profile, tag, count, gs, n, extras, f)) end
+	local msg = build(need, freeText)
 	if #msg > 255 then
 		-- over the chat limit: shorten the need list first (the free text box holds 80 chars) ...
-		body = body:sub(1, math.max(0, #body - (#msg - 255) - 3)) .. "..."
-		msg = build(body, freeText)
+		need = need:sub(1, math.max(0, #need - (#msg - 255) - 3)) .. "..."
+		msg = build(need, freeText)
 	end
 	if #msg > 255 then
-		-- ... and only if that still isn't enough, the free text; "/w spec+gs" always stays
-		local room = 255 - #build(body, "") - 3
-		freeText = (room > 0) and freeText:sub(1, room) or ""
-		msg = build(body, freeText)
+		-- ... and only if that still isn't enough, the free text; "/w spec + GS" always stays
+		local room = math.max(0, #freeText - (#msg - 255))
+		freeText = freeText:sub(1, room)
+		msg = build(need, freeText)
 	end
 	return msg:sub(1, 255), counts
 end

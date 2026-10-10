@@ -259,6 +259,18 @@ local function Build(page)
 	h.line:SetWidth(560)
 	w.showCount = W.Check(page, "Show 23/25 in the LFM line", function(v) P().showCount = v; Changed() end)
 	w.showCount:SetPoint("TOPLEFT", LEFT + 70, -310)
+	w.lfmStyle = W.Dropdown(page, 95, function()
+		local items = {}
+		for _, s in ipairs(RF.LFM_STYLES) do items[#items + 1] = { text = s.name, value = s.key } end
+		return items
+	end, function(value) P().lfmStyle = value; Changed() end)
+	w.lfmStyle:SetPoint("TOPLEFT", LEFT + 232, -304)
+	w.lfmIcon = W.Dropdown(page, 70, function()
+		local items = {}
+		for _, icon in ipairs(RF.LFM_ICONS) do items[#items + 1] = { text = icon, value = icon } end
+		return items
+	end, function(value) P().lfmIcon = value; Changed() end)
+	w.lfmIcon:SetPoint("LEFT", w.lfmStyle, "RIGHT", -28, 0)
 	w.count = W.Label(page, "", "GameFontHighlightSmall")
 	w.count:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, -314)
 	w.preview = W.Label(page, "", "GameFontHighlight")
@@ -308,6 +320,11 @@ local function Refresh(page)
 	w.raidUpdates:SetChecked(p.raidUpdates)
 	w.rwOnJoin:SetChecked(p.raidWarnOnJoin)
 	w.showCount:SetChecked(p.showCount)
+	local styleName = "Clean dashes"
+	for _, s in ipairs(RF.LFM_STYLES) do if s.key == p.lfmStyle then styleName = s.name end end
+	w.lfmStyle:SetValue(p.lfmStyle, styleName)
+	w.lfmIcon:SetValue(p.lfmIcon, p.lfmIcon)
+	if p.lfmStyle == "icons" then w.lfmIcon:Show() else w.lfmIcon:Hide() end
 	w.requireInspect:SetChecked(p.requireInspect)
 	w.remindInspect:SetChecked(p.remindInspect)
 	if p.requireInspect then w.remindInspect:Enable() else w.remindInspect:Disable() end
