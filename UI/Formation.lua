@@ -15,6 +15,8 @@ local QUICK_NEEDS = {
 
 local function P() return RF.profile end
 local function Changed() RF.UI:Refresh() end
+-- your own change: the formation becomes your baseline (kept when the raid changes)
+local function Edited() RF.Core:MarkEdited(); Changed() end
 
 StaticPopupDialogs["RAIDFORMER_SAVE_PRESET"] = {
 	text = "Save formation as preset:",
@@ -45,19 +47,13 @@ function RF.UI.SavePreset(name)
 		roles = p.roles, needs = p.needs, caps = p.caps, extras = p.extras, freeText = p.freeText,
 	})
 	sel.preset = name
+	p.formationSource = "preset:" .. name
 	RF.Print("Preset saved: " .. name)
 	Changed()
 end
 
 local function LoadPreset(name)
-	local preset = RF.db.presets[name]
-	if not preset then return end
-	local p = P()
-	for k, v in pairs(RF.CopyTable(preset)) do p[k] = v end
-	p.buffs = {}
-	RF.SanitizeExtras(p)
-	RF.Print("Preset loaded: " .. name)
-	Changed()
+	if RF.Core:LoadPreset(name) then Changed() end
 end
 
 -- Adds a need, or raises the count of an identical one.
@@ -66,11 +62,11 @@ local function AddNeed(class, spec, count, setCount)
 	for _, need in ipairs(needs) do
 		if need.class == class and need.spec == spec then
 			need.count = setCount and count or math.min(40, (need.count or 1) + count)
-			return Changed()
+			return Edited()
 		end
 	end
 	needs[#needs + 1] = { class = class, spec = spec, count = count }
-	Changed()
+	Edited()
 end
 
 local function RoleOfNeed(need)
@@ -86,7 +82,7 @@ local function Build(page)
 	h:SetPoint("TOPLEFT", 0, 0)
 	w.roles = {}
 	for i, role in ipairs(RF.ROLES) do
-		local s = W.Spinner(page, RF.ROLE_NAMES[role], 75, 0, 40, function(v) P().roles[role] = v; Changed() end)
+		local s = W.Spinner(page, RF.ROLE_NAMES[role], 75, 0, 40, function(v) P().roles[role] = v; Edited() end)
 		local col, row = (i - 1) % 2, math.floor((i - 1) / 2)
 		s:SetPoint("TOPLEFT", col * 180, -20 - row * 24)
 		w.roles[role] = s
@@ -95,11 +91,13 @@ local function Build(page)
 	w.total:SetPoint("TOPLEFT", 370, -24)
 
 	w.loadDefault = W.Button(page, "Load recommended", 130, 20, function()
-		local p = P()
-		p.roles, p.needs, p.buffs, p.caps = RF.DefaultFormation(p.raid, p.size, p.heroic)
+		RF.Core:LoadRecommended() -- follows the raid again from now on
 		Changed()
 	end)
 	w.loadDefault:SetPoint("TOPLEFT", 370, -44)
+	w.baseline = W.Label(page, "", "GameFontDisableSmall")
+	w.baseline:SetPoint("TOPLEFT", 370, -66)
+	w.baseline:SetWidth(190)
 
 	----------------------------------------------------------------- class/spec needs
 	h = W.Header(page, "Class / spec needs")
@@ -138,21 +136,21 @@ local function Build(page)
 		row.role = W.Label(row, "", "GameFontHighlightSmall"); row.role:SetPoint("LEFT", 196, 0); row.role:SetWidth(70)
 		row.minus = W.Button(row, "-", 18, 18, function()
 			row.data.count = math.max(1, (row.data.count or 1) - 1)
-			Changed()
+			Edited()
 		end)
 		row.minus:SetPoint("LEFT", 262, 0)
 		row.count = W.Label(row, "", "GameFontHighlight"); row.count:SetWidth(20); row.count:SetJustifyH("CENTER")
 		row.count:SetPoint("LEFT", row.minus, "RIGHT", 0, 0)
 		row.plus = W.Button(row, "+", 18, 18, function()
 			row.data.count = math.min(40, (row.data.count or 1) + 1)
-			Changed()
+			Edited()
 		end)
 		row.plus:SetPoint("LEFT", row.count, "RIGHT", 0, 0)
 		row.remove = W.Button(row, "x", 18, 18, function()
 			for i, need in ipairs(P().needs) do
 				if need == row.data then table.remove(P().needs, i); break end
 			end
-			Changed()
+			Edited()
 		end)
 		row.remove:SetPoint("RIGHT", -2, 0)
 	end, function(row, need)
@@ -180,10 +178,10 @@ local function Build(page)
 		sel.capMax = tonumber(w.capMax:GetText()) or sel.capMax
 		local caps = P().caps
 		for _, cap in ipairs(caps) do
-			if cap.class == sel.capClass then cap.max = sel.capMax; return Changed() end
+			if cap.class == sel.capClass then cap.max = sel.capMax; return Edited() end
 		end
 		caps[#caps + 1] = { class = sel.capClass, max = sel.capMax }
-		Changed()
+		Edited()
 	end)
 	w.capAdd:SetPoint("LEFT", w.capMax, "RIGHT", 2, 0)
 
@@ -195,7 +193,7 @@ local function Build(page)
 			for i, cap in ipairs(P().caps) do
 				if cap == row.data then table.remove(P().caps, i); break end
 			end
-			Changed()
+			Edited()
 		end)
 		row.remove:SetPoint("RIGHT", -2, 0)
 	end, function(row, cap)
@@ -246,6 +244,7 @@ end
 local function Refresh(page)
 	local p = P()
 	for role, s in pairs(w.roles) do s:SetValue(p.roles[role] or 0) end
+	w.baseline:SetText(RF.Core:BaselineText())
 	local total = RF.Comp.RoleTotal(p)
 	local color = (total == p.size) and "|cff40ff40" or "|cffff4040"
 	w.total:SetText(string.format("Total: %s%d|r / %d", color, total, p.size))

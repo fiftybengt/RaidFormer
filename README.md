@@ -31,7 +31,10 @@ Copy (or symlink) the `RaidFormer` folder into `World of Warcraft/Interface/AddO
 3. **Formation** tab: tank/healer/melee/ranged counts, class/spec needs (e.g. 1x Shaman -
    Restoration, or any Shaman for Bloodlust) with -/+ counts per row, quick-add buttons for
    common specs, a warning when spec needs don't fit the role slots, and class caps.
-   Save your favourite setups as presets.
+   Save your favourite setups as presets. A loaded preset (or anything you edit: roles, needs,
+   caps, min GS) is your baseline: changing raid, size or difficulty afterwards keeps it, only
+   the raid tag changes. "Load recommended" switches back to the recommended setup, which then
+   follows raid changes again. The "Based on: ..." line shows which one you're on.
 4. Click **Start** (or right-click the minimap button). Watch the **Roster** tab.
 
 ## How applicants are handled
