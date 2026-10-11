@@ -67,6 +67,7 @@ function Core:DefaultProfile()
 		raidWarnOnJoin = false, raidWarnText = "g1 vh",
 		inspectTimeout = 180, autoKick = true, raidUpdates = true, rejectWrongSpec = false,
 		requireInspect = true, remindInspect = true, showCount = false,
+		lfmStyle = "dashes", lfmIcon = "skull", -- announcement look (Setup tab)
 		formationSource = "default", -- "default" (recommended), "preset:<name>" or "edited"
 	}
 end
