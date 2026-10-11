@@ -56,7 +56,8 @@ Copy (or symlink) the `RaidFormer` folder into `World of Warcraft/Interface/AddO
 | Accepted | Invited - no whisper (tell them where to go with "RW on join", e.g. `g1 vh`) |
 | Joins the raid | Optional raid warning, e.g. `g1 vh` (Setup: "RW on join"); joins within 10s share one warning, /raid if you're not leader/assist |
 | In range | Inspected automatically, real GS and talent tree checked |
-| GS too low or talents don't match | Whisper with reason + kick (if Auto kick is on) |
+| GS too low or talents don't match | Auto kick on: whisper with the reason + kick. Auto kick off: no whisper, you're told in chat and they stay - Kick or Accept them on the Roster tab |
+| Invited but whispers again (missed the invite popup) | Invited again, at most every 30s |
 | Doesn't come within the timeout | Warned 60s before, then kicked |
 | "Require inspect" off (Setup) | Whoever joins is accepted at their whispered word: no inspect, no GS check, no timeout. Turning it back on only affects players who join afterwards |
 | "Remind to inspect" off (Setup) | No "come to me for inspect" warning and nobody is removed for not showing up; they stay in the queue until you inspect or remove them |

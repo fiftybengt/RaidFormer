@@ -17,6 +17,7 @@ local RW_DELAY = 1              -- seconds after a join before the raid warning 
 local RW_THROTTLE = 10          -- joins close together share one raid warning
 local REAPPLY_COOLDOWN = 300    -- removed for low GS: no new invite + inspect for this long
 local REJOINABLE = { left = true, timeout = true, rejected = true, refused = true }
+local REINVITE_AFTER = 30       -- invited player whispers again (missed the popup): invite again after this
 
 RF.STATUS = {
 	invited = "Invited", waiting = "Waiting for inspect", accepted = "Accepted", rejected = "Rejected",
@@ -219,12 +220,21 @@ function Core:OnWhisper(msg, sender)
 	sender = sender and sender:gsub("%-.*", "") -- strip realm
 	if not sender or sender == UnitName("player") then return end
 	local lower = msg:lower()
-	if lower:find("lfm") or lower:find("%[raidformer%]") or IsOwnReply(lower) then return end
+	-- other leaders' adverts start with LFM (raid icons stripped); an applicant may still say "lfm?" later on
+	local isAdvert = (lower:gsub("{.-}", "")):find("^%s*lfm") ~= nil
+	if isAdvert or lower:find("%[raidformer%]") or IsOwnReply(lower) then return end
 
 	local now = GetTime()
 	local m = RF.members[sender]
 	if m and m.inGroup and not RF.HOLDING[m.status] then return end -- already in the raid (kept by you)
-	if m and RF.HOLDING[m.status] then return end -- already invited / in the raid: nothing to answer
+	if m and RF.HOLDING[m.status] then
+		-- still invited but whispering again: they missed or closed the invite popup, send it again
+		if m.status == "invited" and now - (m.invitedAt or now) >= REINVITE_AFTER and self:CanInvite() then
+			m.invitedAt = now
+			InviteUnit(sender)
+		end
+		return -- already invited / in the raid: nothing to answer
+	end
 
 	-- every spec they offer is an option ("enh 6,3 / resto 5,7"); the raid's needs pick one
 	local options, unknown = RF.ParseOptions(msg)
@@ -334,7 +344,7 @@ function Core:Invite(entry)
 	if GetNumRaidMembers() == 0 and GetNumPartyMembers() >= 4 then ConvertToRaid() end
 	entry.status, entry.invitedAt, entry.reason = "invited", GetTime(), nil
 	entry.warned, entry.joinedAt, entry.gs, entry.nextInspect = nil, nil, nil, nil
-	entry.arrivedAt, entry.readings, entry.confirming = nil, nil, nil
+	entry.arrivedAt, entry.readings, entry.confirming, entry.kicked = nil, nil, nil, nil
 	-- no whisper: the invite itself says enough (use "RW on join" to send them to inspect)
 	InviteUnit(entry.name)
 	self:Refresh()
@@ -449,6 +459,9 @@ function Core:OnRosterUpdate(fromLogin)
 				m.status, m.joinedAt = "waiting", GetTime()
 				m.arrivedAt, m.readings, m.confirming = nil, nil, nil
 				self:QueueJoinWarning()
+			elseif not m.inGroup and m.kicked then
+				-- you pressed Kick while their invite was still open and they accepted it anyway
+				if self:CanInvite() then UninviteUnit(name) end
 			elseif not m.inGroup and REJOINABLE[m.status] then
 				-- refused / removed / left and now back in the raid: someone invited them by hand -> trusted
 				m.status, m.joinedAt, m.manualJoin, m.manual, m.reason = "waiting", GetTime(), true, true, nil
@@ -498,7 +511,7 @@ function Core:OnSystemMessage(msg)
 		if not (m and (RF.HOLDING[m.status] or m.inGroup)) then
 			m = m or { name = invited }
 			RF.members[invited] = m
-			m.status, m.invitedAt, m.reason = "invited", GetTime(), nil
+			m.status, m.invitedAt, m.reason, m.kicked = "invited", GetTime(), nil, nil
 			m.manual, m.manualInvite = true, true
 			self:Refresh()
 		end
@@ -633,8 +646,13 @@ end
 
 function Core:Reject(m, reason, manual)
 	m.status, m.reason = "rejected", reason
-	self:Whisper(m.name, "Sorry, removed: " .. reason .. ".")
-	if RF.profile.autoKick or manual then UninviteUnit(m.name) end
+	if RF.profile.autoKick or manual then
+		self:Whisper(m.name, "Sorry, removed: " .. reason .. ".")
+		UninviteUnit(m.name)
+	else
+		-- Auto kick off: they stay, so don't tell them they were removed - you decide on the Roster tab
+		Print(string.format("%s didn't pass (%s) - still in the raid because Auto kick is off.", m.name, reason))
+	end
 	self:RaidUpdate()
 	self:Refresh()
 end
@@ -711,9 +729,9 @@ end
 function Core:ManualAccept(name)
 	local m = RF.members[name]
 	if not m then return end
-	m.manual = true
+	m.manual, m.kicked, m.verifiedLowAt = true, nil, nil
 	if RF.UnitForName(name) then
-		m.status = "accepted"
+		m.status, m.reason = "accepted", nil
 	elseif m.spec then
 		self:Invite(m)
 	else
@@ -729,7 +747,8 @@ function Core:ManualKick(name)
 	if RF.UnitForName(name) then
 		self:Reject(m, "removed by leader", true)
 	else
-		m.status, m.reason = "rejected", "removed by leader"
+		-- not in the raid yet: their invite may still be open, so remove them if they accept it
+		m.status, m.reason, m.kicked = "rejected", "removed by leader", (m.status == "invited") or nil
 		self:Refresh()
 	end
 end
@@ -769,6 +788,18 @@ local SEND_DELAY_MIN, SEND_DELAY_MAX = 0.8, 1.2 -- random pause between channels
 function Core:Post(manual)
 	local p = RF.profile
 	if self:IsFull() and not manual then return end
+	if not manual and self:NeedText() == "" then
+		-- every role is full but the raid isn't (role counts add up to less than the raid size):
+		-- nobody could be accepted, so don't post "Last spot!" over and over
+		self.nextPost = GetTime() + math.max(30, p.interval or 90)
+		if not self.warnedNoRoom then
+			self.warnedNoRoom = true
+			Print(string.format("Every role is full but the raid is %d/%d - no LFM posted. Raise the role counts in the Formation tab.",
+				#self:Holders(), p.size))
+		end
+		return
+	end
+	self.warnedNoRoom = nil
 	local msg = self:Announcement()
 	local queue = {}
 	for _, ch in ipairs(p.channels or {}) do
@@ -841,11 +872,15 @@ function Core:RaidUpdate()
 			SendChatMessage("Raid is full - thanks everyone!", (IsRaidLeader() or IsRaidOfficer()) and "RAID_WARNING" or "RAID")
 			Print("Raid full! Announcements paused.")
 		end
+		self.raidUpdatePending = nil
 		return
 	end
 	self.announcedFull = false
-	if now - self.lastRaidUpdate < RAID_UPDATE_THROTTLE then return end
-	self.lastRaidUpdate = now
+	if now - self.lastRaidUpdate < RAID_UPDATE_THROTTLE then
+		self.raidUpdatePending = true -- sent from the ticker once the throttle has passed
+		return
+	end
+	self.raidUpdatePending, self.lastRaidUpdate = nil, now
 	SendChatMessage(RF.SafeChat(string.format("%d/%d - still need: %s", #self:Holders(), RF.profile.size, self:NeedText())), "RAID")
 end
 
@@ -887,6 +922,7 @@ function Core:Tick()
 	RF.Inspect:Tick(RF.members)
 	RF.Groups:Tick()
 	self:SendJoinWarning()
+	if self.raidUpdatePending and now - self.lastRaidUpdate >= RAID_UPDATE_THROTTLE then self:RaidUpdate() end
 
 	if self.running and now >= self.nextPost and not self:IsFull() then self:Post() end
 	if changed then self:Refresh() end
@@ -913,7 +949,8 @@ end
 
 function Core:ClearApplicants()
 	for name, m in pairs(RF.members) do
-		if not RF.HOLDING[m.status] then RF.members[name] = nil end
+		-- keep anyone still in the raid (e.g. rejected but kept with Auto kick off)
+		if not RF.HOLDING[m.status] and not m.inGroup then RF.members[name] = nil end
 	end
 	self:Refresh()
 end

@@ -245,7 +245,7 @@ local function Build(page)
 		w.extraButtons[#w.extraButtons + 1] = b
 	end
 
-	-- your own text, placed right before "/w spec+gs"
+	-- your own text, placed right before "/w spec + GS"
 	local freeLabel = W.Label(page, "Free text:", "GameFontHighlightSmall")
 	freeLabel:SetPoint("TOPLEFT", LEFT, -290)
 	w.freeText = W.EditBox(page, 480, false, function(text)
