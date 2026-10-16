@@ -24,23 +24,35 @@ Copy (or symlink) the `RaidFormer` folder into `World of Warcraft/Interface/AddO
    longer than 255 characters, the need list is shortened (ending in "...") and your free text stays.
    Automatic whispers start with `[RaidFormer]` so players can tell an addon is answering;
    LFM posts, /raid messages and raid warnings don't.
-   "Show 23/25 in the LFM line" (optional) puts the current raid count after the raid tag:
-   `LFM TOC25N 23/25 - GS 5.3k+ ...`; it follows people joining and leaving.
+   Once 5 or more spots are taken the raid count is added automatically, for any raid size:
+   `LFM TOC25N [18/25] - GS 5.3k+ ...` (no count below 5); it follows people joining and leaving.
    What's needed: classes from your formation list are only named once they're all that's
    left. Roles are counted with their reserved needs included; a role's count turns into its
    names (e.g. `rsham`) when every open spot of it is reserved, and when every open spot in the
    raid is reserved exactly the remaining needs are listed. Open roles are bundled: every role
    open -> `Need: all`; melee and ranged both open -> one `dps` count. Over a raid:
    `Need: all` -> `Need: 6 heal, 17 dps` -> `Need: rsham, 17 dps` -> `Need: rsham, rog`.
+   Counts never go above the free spots in the raid: 8/10 in with hpal and rdru still on the
+   formation list reads `Need: hpal, rdru`, not `4 heal, 13 dps`. When more classes are on the list
+   than there are spots, any of them will do: 1 heal spot with hpal + rdru needed reads `hpal/rdru`
+   (2 spots, 3 needs: `2 of hpal/rdru/disc`), and whichever whispers first gets in - other healers
+   are still refused. Needs for a role that's already full aren't asked for.
    Specs are abbreviated (rog, rsham, hpal, ppal, demo, hunt, boomy, rdru, disc, fmage,
    SPriest, ...) and players can use the same abbreviations when whispering. With several channels the message goes
    out to each in turn with a random 0.8-1.2s pause between them.
 3. **Formation** tab: tank/healer/melee/ranged counts, class/spec needs (e.g. 1x Shaman -
    Restoration, or any Shaman for Bloodlust) with -/+ counts per row, quick-add buttons for
-   common specs, a warning when spec needs don't fit the role slots, and class caps.
+   common specs, a warning when spec needs don't fit the role slots, and class/spec caps.
+   **Any DPS** spots are for when you don't mind melee or ranged: they go to whichever DPS comes
+   first, and the LFM line asks for `1 dps` (e.g. `Need: 1 rdps, 1 dps` when melee is full).
+   **Caps** take a class and optionally a spec: `Druid max 3` plus `Druid - Restoration max 1`
+   refuses a 2nd rdru (`max 1 rdru`) while other druids are still welcome.
    Save your favourite setups as presets. A loaded preset (or anything you edit: roles, needs,
    caps, min GS) is your baseline: changing raid, size or difficulty afterwards keeps it, only
-   the raid tag changes. "Load recommended" switches back to the recommended setup, which then
+   the raid tag changes. If the role counts added up to the old size, they're fitted to the new
+   one (25 -> 10: 2 tank, 5 heal, 8 melee, 10 ranged becomes 2/2/3/3; needs, caps and GS stay),
+   keeping room for the needs (3 healer specs on the list -> at least 3 heal). If the needs don't
+   fit the formation you get a warning in chat (on Start and after a size change). "Load recommended" switches back to the recommended setup, which then
    follows raid changes again. The "Based on: ..." line shows which one you're on.
 4. Click **Start** (or right-click the minimap button). Watch the **Roster** tab.
 
@@ -57,13 +69,16 @@ Copy (or symlink) the `RaidFormer` folder into `World of Warcraft/Interface/AddO
 | Joins the raid | Optional raid warning, e.g. `g1 vh` (Setup: "RW on join"); joins within 10s share one warning, /raid if you're not leader/assist |
 | In range | Inspected automatically, real GS and talent tree checked |
 | GS too low or talents don't match | Auto kick on: whisper with the reason + kick. Auto kick off: no whisper, you're told in chat and they stay - Kick or Accept them on the Roster tab |
+| Inspected after the raid filled up (you added people yourself while they were on the way) | Their slot was approved for their spec at invite: if the inspect shows that spec, they stay - only GS, or a spec that differs and doesn't fit, can remove them |
+| Inspected after you pressed Stop | Never kicked or whispered; a failed check is only told to you in chat |
 | Invited but whispers again (missed the invite popup) | Invited again, at most every 30s |
-| Doesn't come within the timeout | Warned 60s before, then kicked |
+| Doesn't come within the timeout | Warned 60s before, then kicked (Auto kick off: they stay, no "removed" whisper, you're told in chat) |
 | "Require inspect" off (Setup) | Whoever joins is accepted at their whispered word: no inspect, no GS check, no timeout. Turning it back on only affects players who join afterwards |
 | "Remind to inspect" off (Setup) | No "come to me for inspect" warning and nobody is removed for not showing up; they stay in the queue until you inspect or remove them |
 | Joined without whispering | Inspected too; spec taken from talents |
 | Anyone you (or an assist) invite yourself - friends, a refused/removed player you let in anyway | Holds a slot from the moment you invite them. Trusted: counted, inspected for their spec only, never timed out or removed |
 | Rejected but still in the raid (e.g. auto kick off) | Still takes a slot, counted with their inspected spec |
+| You press "Insp" on the Roster tab | Inspected again to confirm GS - also players you let in yourself and with "Require inspect" off. Moved to the uninspected group right away (swapping with someone already inspected if it's full; not with Manual groups); the result is printed in chat: `Name inspected: GS 5612, rsham - accepted` |
 | Spec unknown or wrong (friend never came to inspect, bear vs cat) | Click the spec in the Roster tab and pick the right one; for players you let in your choice beats talents |
 | Removed for low GS and whispers again within 5 min | Told their inspected GS, not invited again yet |
 | Whispered spec/class differs from the inspect | Real class/spec is used: kept if it still fits (counted as ret), removed if not. Tick "Kick wrong spec claims" to always remove them |
@@ -83,8 +98,8 @@ two low readings with identical gear (a third look is taken if the gear changed)
 **Timeout / warning:** both adjustable in the Setup tab ("Inspect timeout", "Warn before";
 0 = no warning). The Roster tooltip shows the time left.
 
-**Raid groups:** two buttons on the Roster tab (needs leader/assist). Nothing is moved until
-you press one.
+**Raid groups:** `Groups: [Forming] [Final] [Manual]` on the Roster tab (needs leader/assist), the
+active one lit. Nothing is moved until you press Forming or Final.
 - **Forming groups** - RaidFormer controls the groups: you and uninspected players in the
   uninspected group (default 1, overflow into group 8), everyone else (inspected, or let in by
   you) in group 2 and up. It puts back players you move yourself while it is active.
@@ -94,6 +109,9 @@ you press one.
   sort spreads the effects that still only reach one party: Shadow Priest (Vampiric Embrace)
   with ranged, Subtlety Rogue (Honor Among Thieves) with melee, and one Holy Priest / Resto
   Shaman (Prayer of Healing, Healing Stream / Tremor / Cleansing totems) per fighting group.
+- **Manual** - full control: RaidFormer lets go of the groups and never moves anyone, not even
+  when you press Insp, until you press Forming or Final again. Kept over /reload. (Kicks and
+  raid warnings have their own switches in Setup: "Auto kick" and "RW on join".)
 - **Stop** also hands the groups back to you.
 
 **Slot reservation:** if the formation requires e.g. Bloodlust and only one ranged spot is

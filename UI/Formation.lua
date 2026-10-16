@@ -2,7 +2,7 @@
 local _, RF = ...
 
 local w = {}
-local sel = { needClass = "SHAMAN", needSpec = "ANY", needCount = 1, capClass = "DEATHKNIGHT", capMax = 4, preset = nil }
+local sel = { needClass = "SHAMAN", needSpec = "ANY", needCount = 1, capClass = "DEATHKNIGHT", capSpec = "ANY", capMax = 4, preset = nil }
 
 -- one-click needs for the specs raid leaders ask for most
 local QUICK_NEEDS = {
@@ -87,8 +87,21 @@ local function Build(page)
 		s:SetPoint("TOPLEFT", col * 180, -20 - row * 24)
 		w.roles[role] = s
 	end
+	-- "Any DPS": spots for melee or ranged, whoever comes first
+	local flex = W.Spinner(page, "Any DPS", 75, 0, 40, function(v) P().roles.flex = v; Edited() end)
+	flex:SetPoint("TOPLEFT", 370, -20)
+	flex:EnableMouse(true)
+	flex:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_TOP")
+		GameTooltip:AddLine("Any DPS", 1, 1, 1)
+		GameTooltip:AddLine("Spots for melee or ranged, whoever comes first - for when you don't mind which. Shown as 'dps' in the LFM line.", 1, 1, 0.8, true)
+		GameTooltip:Show()
+	end)
+	flex:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	w.roles.flex = flex
 	w.total = W.Label(page, "", "GameFontNormal")
-	w.total:SetPoint("TOPLEFT", 370, -24)
+	w.total:SetPoint("TOPRIGHT", page, "TOPLEFT", 560, -2)
+	w.total:SetJustifyH("RIGHT")
 
 	w.loadDefault = W.Button(page, "Load recommended", 130, 20, function()
 		RF.Core:LoadRecommended() -- follows the raid again from now on
@@ -166,29 +179,39 @@ local function Build(page)
 	w.needWarning:SetWidth(350)
 
 	----------------------------------------------------------------- class caps
-	h = W.Header(page, "Class caps (max)")
+	h = W.Header(page, "Class / spec caps (max)")
 	h:SetPoint("TOPLEFT", 370, -76)
 	h.line:SetWidth(190)
 
-	w.capClass = W.Dropdown(page, 80, function() return W.ClassItems() end, function(value) sel.capClass = value end)
+	w.capClass = W.Dropdown(page, 62, function() return W.ClassItems() end, function(value)
+		sel.capClass, sel.capSpec = value, "ANY"
+		w.capSpec:SetValue("ANY", "Any spec")
+	end)
 	w.capClass:SetPoint("TOPLEFT", 354, -92)
+	w.capSpec = W.Dropdown(page, 62, function() return W.SpecItems(sel.capClass, true) end, function(value)
+		sel.capSpec = value
+	end)
+	w.capSpec:SetPoint("LEFT", w.capClass, "RIGHT", -28, 0)
+	local maxLabel = W.Label(page, "Max", "GameFontHighlightSmall")
+	maxLabel:SetPoint("TOPLEFT", 372, -122)
 	w.capMax = W.EditBox(page, 20, true, function(text) sel.capMax = tonumber(text) or 0 end, 2)
-	w.capMax:SetPoint("LEFT", w.capClass, "RIGHT", -6, 2)
+	w.capMax:SetPoint("LEFT", maxLabel, "RIGHT", 8, 0)
 	w.capAdd = W.Button(page, "Add", 36, 20, function()
 		sel.capMax = tonumber(w.capMax:GetText()) or sel.capMax
+		local spec = (sel.capSpec ~= "ANY") and sel.capSpec or nil
 		local caps = P().caps
 		for _, cap in ipairs(caps) do
-			if cap.class == sel.capClass then cap.max = sel.capMax; return Edited() end
+			if cap.class == sel.capClass and cap.spec == spec then cap.max = sel.capMax; return Edited() end
 		end
-		caps[#caps + 1] = { class = sel.capClass, max = sel.capMax }
+		caps[#caps + 1] = { class = sel.capClass, spec = spec, max = sel.capMax }
 		Edited()
 	end)
-	w.capAdd:SetPoint("LEFT", w.capMax, "RIGHT", 2, 0)
+	w.capAdd:SetPoint("LEFT", w.capMax, "RIGHT", 4, 0)
 
-	w.capList = W.ScrollList(page, 190, 4, 20, function(row)
+	w.capList = W.ScrollList(page, 190, 3, 20, function(row)
 		row.text = W.Label(row, "", "GameFontHighlightSmall")
 		row.text:SetPoint("LEFT", 4, 0)
-		row.text:SetWidth(130)
+		row.text:SetWidth(166)
 		row.remove = W.Button(row, "x", 18, 18, function()
 			for i, cap in ipairs(P().caps) do
 				if cap == row.data then table.remove(P().caps, i); break end
@@ -197,9 +220,10 @@ local function Build(page)
 		end)
 		row.remove:SetPoint("RIGHT", -2, 0)
 	end, function(row, cap)
-		row.text:SetText(string.format("%s%s|r max %d", W.ClassColor(cap.class), RF.CLASS_NAMES[cap.class], cap.max))
+		local what = cap.spec and RF.SPECS[cap.spec] and (RF.CLASS_NAMES[cap.class] .. " - " .. RF.SPECS[cap.spec].name) or RF.CLASS_NAMES[cap.class]
+		row.text:SetText(string.format("%s%s|r max %d", W.ClassColor(cap.class), what, cap.max))
 	end)
-	w.capList:SetPoint("TOPLEFT", 370, -126)
+	w.capList:SetPoint("TOPLEFT", 370, -144)
 
 	----------------------------------------------------------------- quick add needs
 	h = W.Header(page, "Quick add need (+1)")
@@ -261,6 +285,7 @@ local function Refresh(page)
 	w.needWarning:SetText(#problems > 0 and ("|cffff4040" .. table.concat(problems, "; ") .. "|r") or "")
 
 	w.capClass:SetValue(sel.capClass)
+	w.capSpec:SetValue(sel.capSpec or "ANY", (not sel.capSpec or sel.capSpec == "ANY") and "Any spec" or RF.SPECS[sel.capSpec].name)
 	if not w.capMax:HasFocus() then w.capMax:SetText(sel.capMax) end
 	w.capList:SetData(p.caps)
 

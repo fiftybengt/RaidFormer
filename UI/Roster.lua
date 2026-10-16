@@ -67,14 +67,17 @@ local function Build(page)
 		end)
 		button:SetScript("OnLeave", function() GameTooltip:Hide() end)
 	end
-	w.finalButton = W.Button(page, "Final groups", 90, 20, function() RF.Groups:SetFinal() end)
-	w.finalButton:SetPoint("RIGHT", clear, "LEFT", -4, 0)
+	w.manualButton = W.Button(page, "Manual", 62, 20, function() RF.Groups:SetManual() end)
+	w.manualButton:SetPoint("RIGHT", clear, "LEFT", -10, 0)
+	tip(w.manualButton, { "Manual groups", "Full control: RaidFormer never moves anyone in the raid - not even when you press Insp - until you press Forming or Final again. Kept over /reload." })
+	w.finalButton = W.Button(page, "Final", 50, 20, function() RF.Groups:SetFinal() end)
+	w.finalButton:SetPoint("RIGHT", w.manualButton, "LEFT", -4, 0)
 	tip(w.finalButton, { "Final groups", "Sorts the raid once: tanks with melee, then ranged, then healers, with party-only effects spread (Vampiric Embrace, Honor Among Thieves, Prayer of Healing, Healing Stream). After that the raid groups are yours." })
-	w.formingButton = W.Button(page, "Forming groups", 100, 20, function() RF.Groups:SetForming() end)
+	w.formingButton = W.Button(page, "Forming", 66, 20, function() RF.Groups:SetForming() end)
 	w.formingButton:SetPoint("RIGHT", w.finalButton, "LEFT", -4, 0)
 	tip(w.formingButton, { "Forming groups", "RaidFormer takes control of the raid groups: you and uninspected players in the uninspected group, everyone else in the other groups. Also puts back players you moved yourself." })
 	w.groupMode = W.Label(page, "", "GameFontHighlightSmall")
-	w.groupMode:SetPoint("TOPLEFT", 130, -43)
+	w.groupMode:SetPoint("RIGHT", w.formingButton, "LEFT", -6, 0)
 
 	-- column headers
 	local cols = { { "Name", 4 }, { "Spec", 104 }, { "Said", 194 }, { "GS", 234 }, { "Status", 276 } }
@@ -162,6 +165,11 @@ local function Refresh(page)
 		local color = (have >= want) and "|cff40ff40" or "|cffffd100"
 		parts[#parts + 1] = string.format("%s: %s%d/%d|r", RF.ROLE_NAMES[role], color, have, want)
 	end
+	local flex = p.roles.flex or 0
+	if flex > 0 then
+		local _, flexFree = RF.Comp.Free(p, counts)
+		parts[#parts + 1] = string.format("Any DPS: %s%d/%d|r", flexFree == 0 and "|cff40ff40" or "|cffffd100", flex - flexFree, flex)
+	end
 	w.roles:SetText(string.format("%d/%d   ", #holders, p.size) .. table.concat(parts, "   "))
 
 	local needParts = {}
@@ -183,7 +191,9 @@ local function Refresh(page)
 	local mode = RF.Groups.mode
 	if mode == "forming" then w.formingButton:LockHighlight() else w.formingButton:UnlockHighlight() end
 	if mode == "final" then w.finalButton:LockHighlight() else w.finalButton:UnlockHighlight() end
-	w.groupMode:SetText(mode == "forming" and "|cff40ff40Groups: RaidFormer|r" or mode == "final" and "|cffffd100Groups: sorting...|r" or "Groups: yours")
+	local manual = RF.Groups:IsManual()
+	if manual then w.manualButton:LockHighlight() else w.manualButton:UnlockHighlight() end
+	w.groupMode:SetText(mode == "forming" and "|cff40ff40Groups:|r" or mode == "final" and "|cffffd100Groups (sorting):|r" or "Groups:")
 
 	local data = {}
 	for _, m in pairs(RF.members) do

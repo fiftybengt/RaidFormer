@@ -25,10 +25,13 @@ end
 
 -- holders: array of { class=, spec= } (everyone holding a slot, including the leader)
 function Comp.Count(profile, holders)
-	local c = { total = #holders, role = { tank = 0, heal = 0, mdps = 0, rdps = 0 }, class = {}, need = {}, buff = {} }
+	local c = { total = #holders, role = { tank = 0, heal = 0, mdps = 0, rdps = 0 }, class = {}, spec = {}, need = {}, buff = {} }
 	for _, h in ipairs(holders) do
 		local spec = RF.SPECS[h.spec]
-		if spec then c.role[spec.role] = c.role[spec.role] + 1 end
+		if spec then
+			c.role[spec.role] = c.role[spec.role] + 1
+			c.spec[h.spec] = (c.spec[h.spec] or 0) + 1
+		end
 		if h.class then c.class[h.class] = (c.class[h.class] or 0) + 1 end
 		for i, need in ipairs(profile.needs or {}) do
 			if MatchesNeed(h, need) then c.need[i] = (c.need[i] or 0) + 1 end
@@ -78,10 +81,82 @@ function Comp.Unmet(profile, counts)
 	return list
 end
 
-local function CapFor(profile, class)
+-- "Any DPS" spots (profile.roles.flex): taken by melee or ranged once their own spots are full.
+local DPS = { "mdps", "rdps" }
+local IS_DPS = { mdps = true, rdps = true }
+Comp.IS_DPS = IS_DPS
+
+-- Free spots per role, plus the free "Any DPS" spots.
+function Comp.Free(profile, counts)
+	local free, over = {}, 0
+	for _, r in ipairs(RF.ROLES) do free[r] = math.max(0, (profile.roles[r] or 0) - counts.role[r]) end
+	for _, r in ipairs(DPS) do over = over + math.max(0, counts.role[r] - (profile.roles[r] or 0)) end
+	return free, math.max(0, (profile.roles.flex or 0) - over)
+end
+
+-- Class caps ("max 3 Druids") and spec caps ("max 1 rdru"): the reason if specKey would go over one.
+local function OverCap(profile, counts, specKey)
+	local spec = RF.SPECS[specKey]
 	for _, cap in ipairs(profile.caps or {}) do
-		if cap.class == class then return cap.max end
+		if cap.class == spec.class and (not cap.spec or cap.spec == specKey) then
+			local have = cap.spec and (counts.spec[cap.spec] or 0) or (counts.class[spec.class] or 0)
+			if have >= (cap.max or 0) then
+				return "max " .. (cap.max or 0) .. " " .. (cap.spec and RF.SPECS[cap.spec].short or (RF.CLASS_NAMES[spec.class] .. "s"))
+			end
+		end
 	end
+end
+
+-- How many needed players can't get a spot any more (role spots and free raid spots), plus the
+-- labels of those needs. Needs only one role can fill use that role's spots first; the others share
+-- what's left over.
+local function Shortfall(profile, counts)
+	local free, flex = Comp.Free(profile, counts)
+	local single, multi, missingTotal = {}, {}, 0
+	for _, r in ipairs(RF.ROLES) do single[r] = {} end
+	for _, req in ipairs(Comp.Unmet(profile, counts)) do
+		missingTotal = missingTotal + req.missing
+		local onlyRole, n = nil, 0
+		for r in pairs(req.roles) do onlyRole, n = r, n + 1 end
+		if n == 1 then table.insert(single[onlyRole], req) else multi[#multi + 1] = req end
+	end
+	local short, labels, left, def = 0, {}, {}, {}
+	for _, r in ipairs(RF.ROLES) do
+		local want = 0
+		for _, req in ipairs(single[r]) do want = want + req.missing end
+		left[r] = math.max(0, free[r] - want)
+		def[r] = math.max(0, want - free[r])
+	end
+	-- melee/ranged needs beyond their own spots can use "Any DPS" spots
+	for _, r in ipairs(DPS) do
+		local take = math.min(flex, def[r])
+		flex, def[r] = flex - take, def[r] - take
+	end
+	for _, r in ipairs(RF.ROLES) do
+		if def[r] > 0 then
+			short = short + def[r]
+			for _, req in ipairs(single[r]) do labels[#labels + 1] = req.label end
+		end
+	end
+	for _, req in ipairs(multi) do
+		local m = req.missing
+		for _, r in ipairs(RF.ROLES) do
+			if req.roles[r] then
+				local take = math.min(left[r], m)
+				left[r], m = left[r] - take, m - take
+			end
+		end
+		if m > 0 and (req.roles.mdps or req.roles.rdps) then
+			local take = math.min(flex, m)
+			flex, m = flex - take, m - take
+		end
+		if m > 0 then
+			short = short + m
+			labels[#labels + 1] = req.label
+		end
+	end
+	local raidShort = missingTotal - math.max(0, profile.size - counts.total)
+	return math.max(short, raidShort), labels
 end
 
 -- Can a player with specKey join given current slot holders?
@@ -92,36 +167,25 @@ function Comp.CanAccept(profile, holders, specKey)
 	local counts = Comp.Count(profile, holders)
 	if counts.total >= profile.size then return false, "raid is full" end
 
-	local roleMax = profile.roles[spec.role] or 0
-	if counts.role[spec.role] >= roleMax then
+	local free, flex = Comp.Free(profile, counts)
+	if free[spec.role] == 0 and not (IS_DPS[spec.role] and flex > 0) then
+		if IS_DPS[spec.role] and (profile.roles.flex or 0) > 0 then return false, "DPS spots are full" end
 		return false, RF.ROLE_NAMES[spec.role] .. " spots are full"
 	end
 
-	local cap = CapFor(profile, spec.class)
-	if cap and (counts.class[spec.class] or 0) >= cap then
-		return false, "max " .. cap .. " " .. RF.CLASS_NAMES[spec.class] .. "s"
-	end
+	local capped = OverCap(profile, counts, specKey)
+	if capped then return false, capped end
 
-	-- Simulate the join and make sure every unmet requirement can still be filled
-	-- by the remaining open role slots (reservation).
+	-- Reservation: simulate the join; refused if it leaves more needed players without a spot than
+	-- before. When the needs already don't all fit (2 healer specs needed, 1 heal spot) any of them
+	-- may take the spot, but nobody else.
 	local after = {}
 	for i, h in ipairs(holders) do after[i] = h end
 	after[#after + 1] = { class = spec.class, spec = specKey }
-	local counts2 = Comp.Count(profile, after)
-	local roleFree = {}
-	for _, r in ipairs(RF.ROLES) do roleFree[r] = math.max(0, (profile.roles[r] or 0) - counts2.role[r]) end
-
-	local exclusive = {} -- role -> largest missing count among requirements only that role can fill
-	for _, req in ipairs(Comp.Unmet(profile, counts2)) do
-		local free, onlyRole, n = 0, nil, 0
-		for r in pairs(req.roles) do free = free + roleFree[r]; onlyRole = r; n = n + 1 end
-		if free < req.missing then
-			return false, "remaining spots are reserved for " .. req.label
-		end
-		if n == 1 then exclusive[onlyRole] = math.max(exclusive[onlyRole] or 0, req.missing) end
-	end
-	for r, missing in pairs(exclusive) do
-		if missing > roleFree[r] then return false, "remaining spots are reserved" end
+	local before = Shortfall(profile, counts)
+	local short, labels = Shortfall(profile, Comp.Count(profile, after))
+	if short > before then
+		return false, labels[1] and ("remaining spots are reserved for " .. labels[1]) or "remaining spots are reserved"
 	end
 	return true
 end
@@ -136,58 +200,103 @@ end
 -- Over a raid: "all" -> "6 heal, 17 dps" -> "rsham, 17 dps" -> "rsham, rog"
 function Comp.NeedString(profile, holders)
 	local counts = Comp.Count(profile, holders)
-	local open, totalOpen = {}, 0
-	for _, r in ipairs(RF.ROLES) do
-		open[r] = math.max(0, (profile.roles[r] or 0) - counts.role[r])
-		totalOpen = totalOpen + open[r]
-	end
+	local open, flexOpen = Comp.Free(profile, counts)
+	local totalOpen = flexOpen
+	for _, r in ipairs(RF.ROLES) do totalOpen = totalOpen + open[r] end
+	-- never ask for more than the raid still has room for: the role counts can add up to more than
+	-- the free spots (e.g. 25-man role counts in a 10-man raid, or players whose spec isn't known yet)
+	local remaining = math.max(0, (profile.size or 0) - counts.total)
+	for _, r in ipairs(RF.ROLES) do open[r] = math.min(open[r], remaining) end
+	flexOpen = math.min(flexOpen, remaining)
+	totalOpen = math.min(totalOpen, remaining)
 
-	local byRole, reserved, multi, totalMissing = {}, {}, {}, 0
+	local byRole, reserved, multi, multiMissing = {}, {}, {}, 0
 	for _, req in ipairs(Comp.Unmet(profile, counts)) do
-		local label = (req.missing > 1 and (req.missing .. "x ") or "") .. req.label
-		totalMissing = totalMissing + req.missing
-		local onlyRole, n = nil, 0
-		for r in pairs(req.roles) do onlyRole = r; n = n + 1 end
+		local entry = { label = req.label, missing = req.missing }
+		local onlyRole, n, anyOpen = nil, 0, false
+		for r in pairs(req.roles) do
+			onlyRole, n = r, n + 1
+			anyOpen = anyOpen or open[r] > 0
+		end
 		if n == 1 then
 			byRole[onlyRole] = byRole[onlyRole] or {}
-			table.insert(byRole[onlyRole], label)
+			table.insert(byRole[onlyRole], entry)
 			reserved[onlyRole] = (reserved[onlyRole] or 0) + req.missing
-		else
-			multi[#multi + 1] = label
+		elseif anyOpen then
+			multi[#multi + 1] = entry
+			multiMissing = multiMissing + req.missing
 		end
 	end
 
-	local parts = {}
-	local function add(list)
-		for _, label in ipairs(list or {}) do parts[#parts + 1] = label end
+	-- Needs for `spots` places: "rsham, 2x hpal" when they all fit; when there are more needs than
+	-- spots any of them will do: "hpal/rdru" (1 spot) or "2 of hpal/rdru/disc".
+	local function names(list, spots)
+		local missing, full, short = 0, {}, {}
+		for _, e in ipairs(list) do
+			missing = missing + e.missing
+			full[#full + 1] = (e.missing > 1 and (e.missing .. "x ") or "") .. e.label
+			short[#short + 1] = e.label
+		end
+		if missing <= spots then return table.concat(full, ", ") end
+		if spots == 1 then return table.concat(short, "/") end
+		return spots .. " of " .. table.concat(short, "/")
 	end
 
-	if totalOpen > 0 and totalMissing >= totalOpen then
-		-- every open spot is reserved: name exactly who we still need
-		for _, r in ipairs(RF.ROLES) do add(byRole[r]) end
-		add(multi)
+	local parts = {}
+	-- melee/ranged needs beyond their own open spots take "Any DPS" spots
+	local spots, flexLeft = {}, flexOpen
+	for _, r in ipairs(RF.ROLES) do spots[r] = open[r] end
+	for _, r in ipairs(DPS) do
+		local take = math.min(flexLeft, math.max(0, (reserved[r] or 0) - open[r]))
+		spots[r], flexLeft = spots[r] + take, flexLeft - take
+	end
+
+	local fillable = multiMissing -- reserved spots that can actually be taken
+	for _, r in ipairs(RF.ROLES) do fillable = fillable + math.min(spots[r], reserved[r] or 0) end
+	if totalOpen > 0 and fillable >= totalOpen then
+		-- every open spot is reserved: name exactly who we still need (needs for full roles can't join)
+		local groups, spotSum, all = {}, 0, {}
+		for _, r in ipairs(RF.ROLES) do
+			if spots[r] > 0 and byRole[r] then
+				groups[#groups + 1] = { list = byRole[r], spots = math.min(spots[r], reserved[r]) }
+			end
+		end
+		if #multi > 0 then groups[#groups + 1] = { list = multi, spots = multiMissing } end
+		for _, g in ipairs(groups) do
+			spotSum = spotSum + g.spots
+			for _, e in ipairs(g.list) do all[#all + 1] = e end
+		end
+		if spotSum > totalOpen then
+			groups = { { list = all, spots = totalOpen } } -- more names than places left: any of them
+		end
+		for _, g in ipairs(groups) do parts[#parts + 1] = names(g.list, g.spots) end
 		return table.concat(parts, ", "), counts
 	end
 
 	local named = {}
 	for _, r in ipairs(RF.ROLES) do
-		named[r] = open[r] > 0 and (reserved[r] or 0) >= open[r]
+		named[r] = spots[r] > 0 and (reserved[r] or 0) >= open[r]
 	end
 	if open.tank > 0 and open.heal > 0 and open.mdps > 0 and open.rdps > 0
 		and not (named.tank or named.heal or named.mdps or named.rdps) then
 		return "all", counts -- every role still open to anyone
 	end
 	local function role(r)
-		if open[r] == 0 then return end
-		if named[r] then add(byRole[r]) else parts[#parts + 1] = open[r] .. " " .. RF.ROLE_SHORT[r] end
+		if spots[r] == 0 then return end
+		if named[r] then
+			parts[#parts + 1] = names(byRole[r], spots[r])
+		else
+			parts[#parts + 1] = open[r] .. " " .. RF.ROLE_SHORT[r]
+		end
 	end
 	role("tank")
 	role("heal")
 	if open.mdps > 0 and open.rdps > 0 and not named.mdps and not named.rdps then
-		parts[#parts + 1] = (open.mdps + open.rdps) .. " dps" -- melee and ranged both open
+		parts[#parts + 1] = math.min(open.mdps + open.rdps + flexLeft, remaining) .. " dps" -- melee and ranged both open
 	else
 		role("mdps")
 		role("rdps")
+		if flexLeft > 0 then parts[#parts + 1] = flexLeft .. " dps" end -- "Any DPS" spots: melee or ranged
 	end
 	return table.concat(parts, ", "), counts
 end
@@ -201,6 +310,9 @@ function Comp.FormatGS(gs)
 	end
 	return tostring(gs)
 end
+
+-- The LFM line shows "[n/size]" once this many spots are taken (any raid size).
+Comp.COUNT_FROM = 5
 
 -- Announcement styles (Setup tab). The default is "dashes".
 RF.LFM_STYLES = {
@@ -232,7 +344,7 @@ local function Format(profile, tag, count, gs, n, extras, f)
 		return Join({ Join({ "[" .. tag .. "] LFM", count }, " "), "[" .. needSeg .. "]", gs, Join({ extras, f }, ", "), suffix }, " - ")
 	elseif style == "needfirst" then
 		local wants = (n == "all") and "ALL" or ((n ~= "") and n or "a last spot")
-		return Join({ Join({ tag .. " needs " .. wants, count and ("(" .. count .. ")") }, " "), gs, extras, f, suffix }, " - ")
+		return Join({ Join({ tag .. " needs " .. wants, count }, " "), gs, extras, f, suffix }, " - ")
 	end
 	-- "dashes"
 	return Join({ Join({ "LFM", tag, count }, " "), gs, needSeg, extras, f, suffix }, " - ")
@@ -242,8 +354,8 @@ end
 function Comp.BuildAnnouncement(profile, holders)
 	local tag = RF.RaidTag(profile.raid, profile.size, profile.heroic, profile.customName)
 	local need, counts = Comp.NeedString(profile, holders)
-	-- optional "23/25": everyone holding a spot against the raid size
-	local count = profile.showCount and string.format("%d/%d", counts.total, profile.size) or nil
+	-- "[18/25]": everyone holding a spot against the raid size, once there are enough to be worth saying
+	local count = (counts.total >= Comp.COUNT_FROM) and string.format("[%d/%d]", counts.total, profile.size) or nil
 	local gs = "GS " .. Comp.FormatGS(profile.minGS) .. "+"
 	local function trim(s) return ((s or ""):gsub("^%s+", ""):gsub("%s+$", "")) end
 	local extras = trim(profile.extras)
@@ -315,8 +427,9 @@ function Comp.NeedScore(profile, holders, specKey)
 			end
 		end
 	end
-	local slots = profile.roles[spec.role] or 0
-	local open = math.max(0, slots - counts.role[spec.role])
+	local free, flex = Comp.Free(profile, counts)
+	local slots, open = profile.roles[spec.role] or 0, free[spec.role]
+	if IS_DPS[spec.role] then slots, open = slots + (profile.roles.flex or 0), open + flex end
 	return bonus + ((slots > 0) and (open / slots * 10) or 0)
 end
 
@@ -332,10 +445,26 @@ function Comp.NeedsOverflow(profile)
 		end
 	end
 	local problems = {}
+	local flex = profile.roles.flex or 0
+	local dpsWant = (perRole.mdps or 0) + (perRole.rdps or 0)
+	local dpsSlots = (profile.roles.mdps or 0) + (profile.roles.rdps or 0) + flex
 	for _, role in ipairs(RF.ROLES) do
 		local want, slots = perRole[role] or 0, profile.roles[role] or 0
+		if IS_DPS[role] then slots = slots + flex end -- can use the "Any DPS" spots
 		if want > slots then
 			problems[#problems + 1] = string.format("%s needs %d but only %d slots", RF.ROLE_NAMES[role], want, slots)
+		end
+	end
+	if flex > 0 and dpsWant > dpsSlots and (perRole.mdps or 0) <= (profile.roles.mdps or 0) + flex
+		and (perRole.rdps or 0) <= (profile.roles.rdps or 0) + flex then
+		problems[#problems + 1] = string.format("DPS needs %d but only %d slots", dpsWant, dpsSlots)
+	end
+	-- needs above a cap can never be met
+	for _, need in ipairs(profile.needs or {}) do
+		for _, cap in ipairs(profile.caps or {}) do
+			if cap.class == need.class and (not cap.spec or cap.spec == need.spec) and (need.count or 1) > (cap.max or 0) then
+				problems[#problems + 1] = string.format("%s needed %d but max %d", Comp.NeedLabel(need), need.count or 1, cap.max or 0)
+			end
 		end
 	end
 	if total > profile.size then
@@ -344,9 +473,59 @@ function Comp.NeedsOverflow(profile)
 	return problems
 end
 
+-- Role counts for a new raid size, keeping the shape of your setup: the tank count stays, the
+-- other spots are shared out in the same proportions (largest remainder). Always adds up to newSize.
+-- With needs given, every role then keeps room for the needs only it can fill (3 healer specs on
+-- the list -> at least 3 heal), taking spots from the role with most to spare.
+function Comp.ScaleRoles(roles, newSize, needs)
+	local out = { tank = math.min(roles.tank or 0, newSize) }
+	local rest, oldRest = newSize - out.tank, 0
+	local others = { "heal", "mdps", "rdps", "flex" }
+	for _, r in ipairs(others) do oldRest = oldRest + (roles[r] or 0) end
+	local used, fracs = 0, {}
+	for _, r in ipairs(others) do
+		local exact = (oldRest > 0) and ((roles[r] or 0) * rest / oldRest) or (r ~= "flex" and rest / 3 or 0)
+		out[r] = math.floor(exact)
+		used = used + out[r]
+		fracs[#fracs + 1] = { r = r, f = exact - out[r] }
+	end
+	table.sort(fracs, function(a, b)
+		if a.f ~= b.f then return a.f > b.f end
+		return a.r < b.r
+	end)
+	local i = 0
+	while used < rest do
+		local r = fracs[(i % #fracs) + 1].r
+		out[r], used, i = out[r] + 1, used + 1, i + 1
+	end
+
+	local min, minTotal = {}, 0
+	for _, r in ipairs(RF.ROLES) do min[r] = 0 end
+	min.flex = 0
+	for _, need in ipairs(needs or {}) do
+		local only, n = nil, 0
+		for r in pairs(RolesForNeed(need)) do only, n = r, n + 1 end
+		if n == 1 then min[only] = min[only] + (need.count or 1) end
+	end
+	for _, r in ipairs(RF.ROLES) do minTotal = minTotal + min[r] end
+	if minTotal > newSize then return out end -- can't all fit; the Formation tab warns
+	for _, r in ipairs(RF.ROLES) do
+		while out[r] < min[r] do
+			local donor, spare = nil, 0
+			for _, d in ipairs({ "flex", "mdps", "rdps", "heal", "tank" }) do
+				if out[d] - min[d] > spare then donor, spare = d, out[d] - min[d] end
+			end
+			if not donor then break end
+			out[donor], out[r] = out[donor] - 1, out[r] + 1
+		end
+	end
+	return out
+end
+
 -- Sanity check for the Formation tab: role counts must add up to the raid size.
 function Comp.RoleTotal(profile)
 	local t = 0
 	for _, r in ipairs(RF.ROLES) do t = t + (profile.roles[r] or 0) end
+	t = t + (profile.roles.flex or 0) -- "Any DPS"
 	return t
 end
