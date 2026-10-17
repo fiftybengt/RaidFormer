@@ -12,9 +12,9 @@ local function Changed()
 end
 
 -- Raid/size/difficulty changed: optionally load the recommended formation and GS.
-local function RaidChanged()
+local function RaidChanged(oldSize)
 	-- only while on the recommended setup; a preset or your own edits are kept
-	RF.Core:RaidSettingsChanged()
+	RF.Core:RaidSettingsChanged(oldSize)
 	Changed()
 end
 
@@ -62,17 +62,18 @@ local function Build(page)
 		return items
 	end, function(value)
 		local p = P()
+		local oldSize = p.size
 		p.raid = value
 		local r = RF.RAID_BY_KEY[value]
 		if not r.heroic then p.heroic = false end
 		if not r.custom and p.size ~= 10 and p.size ~= 25 then p.size = 25 end
-		RaidChanged()
+		RaidChanged(oldSize)
 	end)
 	w.raid:SetPoint("TOPLEFT", LEFT - 16, -18)
 
-	w.size10 = W.Radio(page, "10 man", function() P().size = 10; RaidChanged() end)
+	w.size10 = W.Radio(page, "10 man", function() local old = P().size; P().size = 10; RaidChanged(old) end)
 	w.size10:SetPoint("TOPLEFT", LEFT, -54)
-	w.size25 = W.Radio(page, "25 man", function() P().size = 25; RaidChanged() end)
+	w.size25 = W.Radio(page, "25 man", function() local old = P().size; P().size = 25; RaidChanged(old) end)
 	w.size25:SetPoint("LEFT", w.size10, "RIGHT", 60, 0)
 
 	w.customLabel = W.Label(page, "Name / size:", "GameFontHighlightSmall")
@@ -84,7 +85,7 @@ local function Build(page)
 	w.customName:SetPoint("LEFT", w.customLabel, "RIGHT", 10, 0)
 	w.customSize = W.EditBox(page, 30, true, function(text)
 		local n = tonumber(text)
-		if n and n >= 2 and n <= 40 then P().size = n; RaidChanged() else Changed() end
+		if n and n >= 2 and n <= 40 then local old = P().size; P().size = n; RaidChanged(old) else Changed() end
 	end, 2)
 	w.customSize:SetPoint("LEFT", w.customName, "RIGHT", 10, 0)
 
@@ -148,15 +149,16 @@ local function Build(page)
 	chLabel:SetPoint("TOPLEFT", RIGHT, -86)
 	w.channels = W.MultiDropdown(page, 150, function()
 		local items = {}
-		local list = { GetChannelList() }
-		for i = 1, #list, 2 do
-			items[#items + 1] = { text = list[i] .. ". " .. list[i + 1], value = list[i + 1] }
+		for _, c in ipairs(RF.Core:ChannelList()) do
+			items[#items + 1] = { text = c.id .. ". " .. c.name, value = c.name }
 		end
 		-- keep selected channels visible even if not joined right now
 		for _, ch in ipairs(P().channels) do
 			local found = false
 			for _, item in ipairs(items) do if item.value == ch then found = true end end
-			if not found then items[#items + 1] = { text = ch .. " (not joined)", value = ch } end
+			if not found then
+				items[#items + 1] = { text = ch .. (RF.Core:ChannelId(ch) and "" or " (not joined)"), value = ch }
+			end
 		end
 		return items
 	end, function(value)
@@ -257,14 +259,14 @@ local function Build(page)
 	h = W.Header(page, "Preview")
 	h:SetPoint("TOPLEFT", LEFT, -314)
 	h.line:SetWidth(560)
-	w.showCount = W.Check(page, "Show 23/25 in the LFM line", function(v) P().showCount = v; Changed() end)
-	w.showCount:SetPoint("TOPLEFT", LEFT + 70, -310)
 	w.lfmStyle = W.Dropdown(page, 95, function()
 		local items = {}
 		for _, s in ipairs(RF.LFM_STYLES) do items[#items + 1] = { text = s.name, value = s.key } end
 		return items
 	end, function(value) P().lfmStyle = value; Changed() end)
-	w.lfmStyle:SetPoint("TOPLEFT", LEFT + 232, -304)
+	local styleLabel = W.Label(page, "Style:", "GameFontHighlightSmall")
+	styleLabel:SetPoint("TOPLEFT", LEFT + 80, -316)
+	w.lfmStyle:SetPoint("LEFT", styleLabel, "RIGHT", -10, -2)
 	w.lfmIcon = W.Dropdown(page, 70, function()
 		local items = {}
 		for _, icon in ipairs(RF.LFM_ICONS) do items[#items + 1] = { text = icon, value = icon } end
@@ -319,7 +321,6 @@ local function Refresh(page)
 	w.strict:SetChecked(p.rejectWrongSpec)
 	w.raidUpdates:SetChecked(p.raidUpdates)
 	w.rwOnJoin:SetChecked(p.raidWarnOnJoin)
-	w.showCount:SetChecked(p.showCount)
 	local styleName = "Clean dashes"
 	for _, s in ipairs(RF.LFM_STYLES) do if s.key == p.lfmStyle then styleName = s.name end end
 	w.lfmStyle:SetValue(p.lfmStyle, styleName)

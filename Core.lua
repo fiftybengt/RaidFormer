@@ -67,7 +67,7 @@ function Core:DefaultProfile()
 		pendingGroup = 1, acceptedGroup = 2, -- raid group control: Forming / Final buttons (Roster tab)
 		raidWarnOnJoin = false, raidWarnText = "g1 vh",
 		inspectTimeout = 180, autoKick = true, raidUpdates = true, rejectWrongSpec = false,
-		requireInspect = true, remindInspect = true, showCount = false,
+		requireInspect = true, remindInspect = true,
 		lfmStyle = "dashes", lfmIcon = "skull", -- announcement look (Setup tab)
 		formationSource = "default", -- "default" (recommended), "preset:<name>" or "edited"
 	}
@@ -92,6 +92,7 @@ function Core:InitDB()
 	end
 	p.channel, p.mySpec, p.strictTalents = nil, nil, nil
 	p.organizeGroups, p.sortByRole = nil, nil -- replaced by the Forming / Final buttons
+	p.showCount = nil -- the "[18/25]" count is now shown automatically from 5 players
 	p.buffs = {} -- buff/utility requirements were removed from the UI; don't keep hidden ones
 	MergeDefaults(p, self:DefaultProfile())
 	RF.SanitizeExtras(p)
@@ -343,6 +344,7 @@ end
 function Core:Invite(entry)
 	if GetNumRaidMembers() == 0 and GetNumPartyMembers() >= 4 then ConvertToRaid() end
 	entry.status, entry.invitedAt, entry.reason = "invited", GetTime(), nil
+	entry.approvedSpec = entry.spec -- the slot was checked for this spec: the inspect doesn't re-check it
 	entry.warned, entry.joinedAt, entry.gs, entry.nextInspect = nil, nil, nil, nil
 	entry.arrivedAt, entry.readings, entry.confirming, entry.kicked = nil, nil, nil, nil
 	-- no whisper: the invite itself says enough (use "RW on join" to send them to inspect)
@@ -598,6 +600,8 @@ function Core:OnInspected(name, class, gs, ilvl, tab, incomplete, signature)
 		m.spec, m.specGuessed = m.specByLeader or actual or m.spec, nil
 		m.status, m.confirming = "accepted", nil
 		for _, r in ipairs(m.readings) do r.sig = nil end
+		if m.forceInspect then self:ReportInspect(m) end
+		m.forceInspect = nil
 		self:Refresh()
 		return
 	end
@@ -614,7 +618,9 @@ function Core:OnInspected(name, class, gs, ilvl, tab, incomplete, signature)
 	elseif claimedWrong and p.rejectWrongSpec then
 		reason = string.format("whispered %s but you are %s",
 			self:ClaimLabel(m.claimedSpec, m.claimedClass, m.claimedRole), RF.SPECS[actual].short)
-	else
+	elseif actual ~= m.approvedSpec and actual ~= m.specByLeader then
+		-- their slot was approved for another spec at invite: does the real one still fit? (Someone who
+		-- is what they said keeps their slot, even if the raid filled up while they were on the way.)
 		local ok, why = RF.Comp.CanAccept(p, self:Holders(name), actual)
 		if not ok then reason = (claimedWrong and ("as " .. RF.SPECS[actual].short .. " ") or "") .. why end
 	end
@@ -641,17 +647,21 @@ function Core:OnInspected(name, class, gs, ilvl, tab, incomplete, signature)
 		m.status, m.reason = "accepted", nil
 		self:RaidUpdate()
 	end
+	if m.forceInspect then self:ReportInspect(m) end
+	m.forceInspect = nil
 	self:Refresh()
 end
 
 function Core:Reject(m, reason, manual)
 	m.status, m.reason = "rejected", reason
-	if RF.profile.autoKick or manual then
+	if manual or (RF.profile.autoKick and self.running) then
 		self:Whisper(m.name, "Sorry, removed: " .. reason .. ".")
 		UninviteUnit(m.name)
 	else
-		-- Auto kick off: they stay, so don't tell them they were removed - you decide on the Roster tab
-		Print(string.format("%s didn't pass (%s) - still in the raid because Auto kick is off.", m.name, reason))
+		-- Auto kick off, or RaidFormer stopped (raid formed): they stay, so don't tell them they were
+		-- removed - you decide on the Roster tab
+		Print(string.format("%s didn't pass (%s) - still in the raid because %s.", m.name, reason,
+			self.running and "Auto kick is off" or "RaidFormer is stopped"))
 	end
 	self:RaidUpdate()
 	self:Refresh()
@@ -668,7 +678,7 @@ end
 -- "Require inspect" off: whoever joins is taken at their whispered word - no inspect, no GS
 -- check, no timeout. They are counted with the spec they gave (or the one you set).
 function Core:PromoteIfNoInspect(m)
-	if RF.profile.requireInspect or m.status ~= "waiting" then return false end
+	if RF.profile.requireInspect or m.status ~= "waiting" or m.forceInspect then return false end
 	m.status, m.reason, m.confirming = "accepted", nil, nil
 	return true
 end
@@ -700,10 +710,28 @@ function Core:LoadRecommended()
 	p.formationSource = "default"
 end
 
--- Raid, size or difficulty changed in the Setup tab.
-function Core:RaidSettingsChanged()
+-- Raid, size or difficulty changed in the Setup tab. oldSize = the raid size before the change.
+function Core:RaidSettingsChanged(oldSize)
 	local p = RF.profile
-	if p.autoDefaults and (p.formationSource or "default") == "default" then self:LoadRecommended() end
+	if p.autoDefaults and (p.formationSource or "default") == "default" then return self:LoadRecommended() end
+	-- your own setup is kept, but its role counts are fitted to a new raid size if they fitted the old
+	-- one (a 25-man preset used for a 10-man would otherwise let far too many of one role in)
+	if oldSize and oldSize ~= p.size and RF.Comp.RoleTotal(p) == oldSize then
+		p.roles = RF.Comp.ScaleRoles(p.roles, p.size, p.needs)
+		local r = p.roles
+		Print(string.format("Role counts fitted to %d-man: %d tank, %d heal, %d mdps, %d rdps%s (needs, caps and GS kept).",
+			p.size, r.tank, r.heal, r.mdps, r.rdps, (r.flex or 0) > 0 and (", " .. r.flex .. " any dps") or ""))
+		self:WarnNeedsOverflow()
+	end
+end
+
+-- More class/spec needs than the formation has room for: only some of them can join
+-- (the LFM line then asks for any of them, e.g. "hpal/rdru").
+function Core:WarnNeedsOverflow()
+	local problems = RF.Comp.NeedsOverflow(RF.profile)
+	if #problems > 0 then
+		Print("|cffff4040Warning:|r needs don't fit the formation (" .. table.concat(problems, "; ") .. ") - only some of them can join. Fix it on the Formation tab.")
+	end
 end
 
 function Core:LoadPreset(name)
@@ -753,13 +781,25 @@ function Core:ManualKick(name)
 	end
 end
 
+-- Roster "Insp": inspect this player again to confirm their GS - also players you let in yourself
+-- and with "Require inspect" off - and put them in the uninspected group right away.
 function Core:Reinspect(name)
 	local m = RF.members[name]
-	if m and RF.UnitForName(name) then
-		m.status, m.nextInspect, m.warned, m.joinedAt = "waiting", nil, nil, GetTime()
-		m.arrivedAt, m.readings, m.confirming = nil, nil, nil
-		self:Refresh()
-	end
+	if not (m and RF.UnitForName(name)) then return end
+	m.status, m.nextInspect, m.warned, m.joinedAt = "waiting", nil, nil, GetTime()
+	m.arrivedAt, m.readings, m.confirming = nil, nil, nil
+	m.forceInspect = true
+	local moved = RF.Groups:MoveToPending(name)
+	Print(name .. " will be inspected" .. (moved and " - moved to the uninspected group." or
+		RF.Groups:IsManual() and " (manual groups: not moved)." or "."))
+	self:Refresh()
+end
+
+-- Chat line with the result of an inspect you asked for with "Insp".
+function Core:ReportInspect(m)
+	local spec = RF.SPECS[m.spec]
+	local result = (m.status == "accepted") and "accepted" or (m.reason or m.status)
+	Print(string.format("%s inspected: GS %d, %s - %s", m.name, m.gs or 0, spec and spec.short or "?", result))
 end
 
 ---------------------------------------------------------------------------
@@ -774,8 +814,32 @@ function Core:IsFull()
 	return #self:Holders() >= RF.profile.size
 end
 
+-- Joined chat channels as { id=, name= }. GetChannelList gives "id, name" pairs (some clients add
+-- a third value), so pick out number + name pairs instead of assuming the layout.
+function Core:ChannelList()
+	local raw, list = { GetChannelList() }, {}
+	for i = 1, #raw - 1 do
+		if type(raw[i]) == "number" and type(raw[i + 1]) == "string" then
+			list[#list + 1] = { id = raw[i], name = raw[i + 1] }
+		end
+	end
+	return list
+end
+
+-- "General" -> "general"; "General - Dalaran" -> "general"
+local function ChannelBase(name)
+	return ((tostring(name or "")):lower():gsub("%s+%-%s+.*$", ""))
+end
+
+-- Channel number for a saved channel name. GetChannelName("General") finds nothing - zone channels
+-- are really called "General - Dalaran" - so match the joined-channel list by name first, ignoring
+-- the zone part and case. That also keeps working after you change zone.
 function Core:ChannelId(ch)
 	if not ch or ch == "" then return nil end
+	local want = ChannelBase(ch)
+	for _, c in ipairs(self:ChannelList()) do
+		if ChannelBase(c.name) == want then return c.id end
+	end
 	local id = GetChannelName(ch)
 	if (not id or id == 0) and tonumber(ch) then id = GetChannelName(tonumber(ch)) end
 	if id and id > 0 then return id end
@@ -814,7 +878,7 @@ function Core:Post(manual)
 	if p.postYell then queue[#queue + 1] = { msg = msg, chatType = "YELL" } end
 	self.nextPost = GetTime() + math.max(30, p.interval or 90)
 	if #queue == 0 then
-		Print("No announcement target set - pick channels in the Setup tab.")
+		if #(p.channels or {}) == 0 then Print("No announcement target set - pick channels in the Setup tab.") end
 		return
 	end
 	self.sendQueue, self.nextSendAt = queue, 0
@@ -912,8 +976,12 @@ function Core:Tick()
 					self:Whisper(name, string.format("Please come to me for inspect - you'll be removed in %d seconds.", warnBefore))
 				elseif waited > p.inspectTimeout and not m.inspecting then
 					m.status, m.reason, changed = "timeout", "didn't come for inspect", true
-					self:Whisper(name, "Removed: didn't come for inspect in time. Whisper again when you're nearby.")
-					if p.autoKick then UninviteUnit(name) end
+					if p.autoKick then
+						self:Whisper(name, "Removed: didn't come for inspect in time. Whisper again when you're nearby.")
+						UninviteUnit(name)
+					else
+						Print(name .. " didn't come for inspect in time - still in the raid because Auto kick is off.")
+					end
 				end
 			end
 		end
@@ -937,6 +1005,7 @@ function Core:Start()
 	if RF.Comp.RoleTotal(RF.profile) ~= RF.profile.size then
 		Print("|cffff4040Warning:|r role counts (" .. RF.Comp.RoleTotal(RF.profile) .. ") don't match raid size (" .. RF.profile.size .. ").")
 	end
+	self:WarnNeedsOverflow()
 	self:Refresh()
 end
 

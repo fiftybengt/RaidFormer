@@ -4,6 +4,8 @@
 --    you - goes to the other groups. Pressing it takes control, also over your own hand moves.
 --  * Final groups: one-off sort into WotLK groups by role and spec, then the raid groups are
 --    yours: nothing is moved again until you press Forming groups.
+--  * Manual groups: hands off - RaidFormer never moves anyone (not even for "Insp") until you
+--    press Forming or Final again. Kept over /reload.
 -- Stopping RaidFormer also hands the raid groups back to you (without sorting).
 local _, RF = ...
 
@@ -52,7 +54,37 @@ end
 
 -- still to be inspected (players you let in yourself count as formed)
 local function IsUninspected(m)
-	return m and m.status == "waiting" and not m.manual
+	-- a player you let in yourself counts as formed, unless you asked for an inspect ("Insp")
+	return m and m.status == "waiting" and (not m.manual or m.forceInspect)
+end
+
+-- Roster "Insp": put the player in the uninspected group right away (needs leader/assist).
+-- If it's full, swap with someone there who doesn't need inspecting - never you.
+-- Returns true if a move was made.
+function Groups:MoveToPending(name)
+	if RF.profile.manualGroups or not CanMove() then return false end
+	local pending = Settings()
+	local roster, me, target, count = Roster(), UnitName("player"), nil, 0
+	for _, r in ipairs(roster) do
+		if r.group == pending then count = count + 1 end
+		if r.name == name then target = r end
+	end
+	if not target or target.group == pending then return false end
+	if count < GROUP_SIZE then
+		SetRaidSubgroup(target.index, pending)
+	else
+		local other
+		for _, r in ipairs(roster) do
+			if r.group == pending and r.name ~= me and r.name ~= name and not IsUninspected(RF.members[r.name]) then
+				other = r
+				break
+			end
+		end
+		if not other then return false end
+		SwapRaidSubgroup(target.index, other.index)
+	end
+	self.lastMove, self.waitingForRoster = GetTime(), true
+	return true
 end
 
 function Groups:OnRosterUpdate()
@@ -69,6 +101,7 @@ function Groups:SetForming()
 		return
 	end
 	self.mode, self.finalPlan, self.waitingForRoster = "forming", nil, false
+	RF.profile.manualGroups = nil
 	RF.Print("Forming groups: RaidFormer controls the raid groups (uninspected in group " .. Settings() .. ").")
 	RF.Core:Refresh()
 end
@@ -79,9 +112,22 @@ function Groups:SetFinal()
 		return
 	end
 	self.mode, self.finalPlan, self.waitingForRoster = "final", nil, false
+	RF.profile.manualGroups = nil
 	self.finalUntil = GetTime() + FINAL_TIMEOUT
 	RF.Print("Final groups: sorting the raid, then the groups are yours.")
 	RF.Core:Refresh()
+end
+
+-- Manual: the raid groups are fully yours, nothing is moved until you press Forming or Final.
+function Groups:SetManual()
+	self:Release(true)
+	RF.profile.manualGroups = true
+	RF.Print("Manual groups: RaidFormer won't move anyone - the raid groups are all yours (Insp included). Press Forming or Final to hand them back.")
+	RF.Core:Refresh()
+end
+
+function Groups:IsManual()
+	return RF.profile.manualGroups and true or false
 end
 
 -- Hand the raid groups back to you (Stop, or when the final sort is done).
