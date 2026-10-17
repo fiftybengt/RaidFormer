@@ -13,8 +13,10 @@ Comp.lua
 Inspect.lua
 Groups.lua
 Core.lua
+UI\Skin.lua
 UI\Widgets.lua
 UI\Main.lua
-UI\Setup.lua
+UI\Raid.lua
 UI\Formation.lua
-UI\Roster.lua
+UI\Settings.lua
+UI\MiniBar.lua

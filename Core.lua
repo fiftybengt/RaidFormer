@@ -100,6 +100,8 @@ function Core:InitDB()
 	db.aliases = db.aliases or {}           -- word -> spec key / class key / role (/rf alias)
 	db.unknownWords = db.unknownWords or {} -- words from whispers nothing matched (/rf unknown)
 	db.ui = db.ui or {}
+	db.ui.mini = db.ui.mini or { mode = "running" } -- mini bar: running / always / never
+	db.ui.collapsed = db.ui.collapsed or {}       -- folded roster sections
 	db.minimap = db.minimap or { angle = 200, hide = false }
 	-- keep applicant state across /reload, but not across long breaks
 	if db.members and db.membersSavedAt and time() - db.membersSavedAt < 3600 then
