@@ -140,12 +140,33 @@ end
 -- Build
 ---------------------------------------------------------------------------
 
+-- Only one row shows its highlight and Accept/Insp/Kick at a time: entering a row clears the last
+-- one, redraws reset the others, and a check on the list clears it once the mouse is gone
+-- (enter/leave events alone miss fast moves from a button onto the next row).
+local hovered
+
+local function SetHover(row, on)
+	if on then row.hl:Show() else row.hl:Hide() end
+	local buttons = on and row.data and not row.data.isHeader
+	for _, b in ipairs({ row.insp, row.accept, row.kick }) do
+		if buttons then b:Show() else b:Hide() end
+	end
+end
+
+local function ClearHover()
+	if hovered then SetHover(hovered, false) end
+	hovered = nil
+end
+w.ClearHover = ClearHover
+function w.Hovered() return hovered end
+
 local function RowEnter(row)
 	local m = row.data
 	if not m then return end
-	row.hl:Show()
+	if hovered ~= row then ClearHover() end
+	hovered = row
+	SetHover(row, true)
 	if m.isHeader then return end
-	row.insp:Show(); row.accept:Show(); row.kick:Show()
 	GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
 	GameTooltip:AddLine(RF.W.ClassColor(m.class) .. m.name .. "|r")
 	if m.whisper then GameTooltip:AddLine("Whispered: " .. m.whisper, 0.8, 0.8, 1, true) end
@@ -171,8 +192,7 @@ end
 local function RowLeave(row)
 	GameTooltip:Hide()
 	if MouseIsOver and MouseIsOver(row) then return end -- moved onto one of its buttons
-	row.hl:Hide()
-	row.insp:Hide(); row.accept:Hide(); row.kick:Hide()
+	if hovered == row then ClearHover() else SetHover(row, false) end
 end
 
 local function Build(page)
@@ -289,6 +309,7 @@ local function Build(page)
 	end, function(row, m)
 		local W, C, hex = RF.W, RF.Skin.C, RF.Skin.Hex
 		local header = m.isHeader
+		SetHover(row, row == hovered)
 		for _, el in ipairs({ row.title, row.fold, row.line }) do if header then el:Show() else el:Hide() end end
 		for _, el in ipairs({ row.classIcon, row.name, row.roleIcon, row.spec, row.specButton, row.gs, row.status }) do
 			if header then el:Hide() else el:Show() end
@@ -297,7 +318,6 @@ local function Build(page)
 			row.title:SetText(string.upper(m.title) .. hex(C.muted) .. "  " .. m.count .. "|r")
 			row.fold:SetText(m.collapsed and "show" or "hide")
 			if m.key == "history" and m.count > 0 then row.clear:Show() else row.clear:Hide() end
-			row.kick:Hide(); row.insp:Hide(); row.accept:Hide()
 			return
 		end
 		row.clear:Hide()
@@ -319,6 +339,15 @@ local function Build(page)
 		row.status:SetText(StatusText(m))
 		if m.status == "accepted" then row.accept:Disable() else row.accept:Enable() end
 		if RF.UnitForName(m.name) then row.insp:Enable() else row.insp:Disable() end
+	end)
+
+	-- safety net: whatever events were missed, the buttons go once the mouse has left that row
+	local since = 0
+	w.list:SetScript("OnUpdate", function(_, elapsed)
+		since = since + elapsed
+		if since < 0.1 then return end
+		since = 0
+		if hovered and not (hovered:IsShown() and MouseIsOver and MouseIsOver(hovered)) then ClearHover() end
 	end)
 end
 
@@ -453,6 +482,7 @@ local function Refresh(page)
 	for _, c in ipairs(w.cols) do c.label:SetPoint("TOPLEFT", page, "TOPLEFT", c.x, -158) end
 	w.list:SetPoint("TOPLEFT", 0, -172)
 	w.list:SetData(RF.UI.RosterItems())
+	if hovered and not (hovered:IsShown() and hovered.data) then ClearHover() end
 	Status(page)
 end
 
