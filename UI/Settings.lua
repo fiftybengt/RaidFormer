@@ -2,6 +2,8 @@
 local _, RF = ...
 
 local w = {}
+RF.UI.widgets = RF.UI.widgets or {}
+RF.UI.widgets.settings = w -- for tests and debugging
 local LEFT, RIGHT, FIELD = 0, 316, 74
 
 local function P() return RF.profile end
@@ -243,7 +245,6 @@ local function Build(page)
 	----------------------------------------------------------------- Interface
 	W.Header(page, "Interface", 300):SetPoint("TOPLEFT", RIGHT, -188)
 	Field("Scale", RIGHT, -208)
-	local dragging = false
 	local function ApplyScale(v)
 		RF.db.ui.scale = v
 		if RF.UI.frame then RF.UI.frame:SetScale(v) end
@@ -251,12 +252,13 @@ local function Build(page)
 	end
 	w.scale = W.Slider(page, 150, 0.7, 1.4, 0.05, function(v)
 		w.scaleText:SetText(string.format("%d%%", v * 100 + 0.5))
-		if not dragging then ApplyScale(v) end
+		if not w.scale.dragging then ApplyScale(v) end
 	end)
 	w.scale:SetPoint("TOPLEFT", RIGHT + 60, -212)
-	w.scale:SetScript("OnMouseDown", function() dragging = true end)
+	-- scale is applied on release (resizing under the cursor while dragging makes the thumb jump)
+	w.scale:SetScript("OnMouseDown", function(self) self.dragging = true end)
 	w.scale:SetScript("OnMouseUp", function(self)
-		dragging = false
+		self.dragging = false
 		ApplyScale(math.floor(self:GetValue() / 0.05 + 0.5) * 0.05)
 	end)
 	w.scaleText = W.Label(page, "", "RaidFormerFontMuted")
@@ -380,9 +382,11 @@ local function Refresh(page)
 	if not w.pendingGroup:HasFocus() then w.pendingGroup:SetText(p.pendingGroup) end
 	if not w.acceptedGroup:HasFocus() then w.acceptedGroup:SetText(p.acceptedGroup) end
 
-	local scale = RF.db.ui.scale or 1
-	w.scale:SetSilent(scale)
-	w.scaleText:SetText(string.format("%d%%", scale * 100 + 0.5))
+	if not w.scale.dragging then -- a redraw mid-drag would yank the thumb back
+		local scale = RF.db.ui.scale or 1
+		w.scale:SetSilent(scale)
+		w.scaleText:SetText(string.format("%d%%", scale * 100 + 0.5))
+	end
 	w.miniMode:SetValue(MiniDB().mode or "running")
 	w.miniLock:SetChecked(MiniDB().locked)
 	w.minimap:SetChecked(not RF.db.minimap.hide)

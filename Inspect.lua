@@ -12,7 +12,7 @@ local FOREIGN_RETRY_DELAY = 1
 local MAX_FOREIGN_RETRIES = 10
 local MIN_GAP = 1.0           -- seconds between our NotifyInspect calls
 
-local function UnitForName(name)
+local function ScanForUnit(name)
 	for i = 1, GetNumRaidMembers() do
 		local unit = "raid" .. i
 		if UnitName(unit) == name then return unit end
@@ -22,7 +22,30 @@ local function UnitForName(name)
 		if UnitName(unit) == name then return unit end
 	end
 end
+
+-- name -> unit ("raid7"), or false = not in the group. Filled from roster updates and lookups; a
+-- hit is checked against UnitName (indexes shift), and the whole map is dropped when the group size
+-- changes, so a stale "not in the group" can't stick.
+local unitByName, unitMapSize = {}, -1
+
+local function GroupSize() return GetNumRaidMembers() + GetNumPartyMembers() end
+
+local function UnitForName(name)
+	local size = GroupSize()
+	if size ~= unitMapSize then unitByName, unitMapSize = {}, size end
+	local unit = unitByName[name]
+	if unit == false then return nil end
+	if unit and UnitName(unit) == name then return unit end
+	unit = ScanForUnit(name)
+	unitByName[name] = unit or false
+	return unit
+end
 RF.UnitForName = UnitForName
+
+-- Core:OnRosterUpdate hands over the fresh name -> unit list.
+function Inspect.SetUnits(map)
+	unitByName, unitMapSize = map, GroupSize()
+end
 
 local function InRange(unit)
 	return UnitIsConnected(unit) and UnitIsVisible(unit) and CheckInteractDistance(unit, 1) and CanInspect(unit)
@@ -65,10 +88,15 @@ function Inspect:Queue(members)
 	return queue
 end
 
+-- name -> place in the queue (1 = next), built once for a whole roster redraw.
+function Inspect:QueuePositions()
+	local positions = {}
+	for i, m in ipairs(self:Queue(RF.members)) do positions[m.name] = i end
+	return positions
+end
+
 function Inspect:QueuePosition(name)
-	for i, m in ipairs(self:Queue(RF.members)) do
-		if m.name == name then return i end
-	end
+	return self:QueuePositions()[name]
 end
 
 function Inspect:IsBusy() return self.pending ~= nil end
@@ -102,6 +130,16 @@ function Inspect:Tick(members)
 	local p = self.pending
 	if p then
 		if p.retryAt and now >= p.retryAt then
+			if InspectFrame and InspectFrame:IsShown() then
+				-- your own Inspect window is open: asking now would overwrite what it shows
+				p.foreignRetries = p.foreignRetries + 1
+				if p.foreignRetries > MAX_FOREIGN_RETRIES then
+					self:Finish(members, false)
+				else
+					p.retryAt = now + FOREIGN_RETRY_DELAY
+				end
+				return
+			end
 			p.retryAt = nil
 			local unit = UnitForName(p.name)
 			if unit and InRange(unit) then
@@ -138,7 +176,8 @@ function Inspect:Finish(members, done)
 		members[p.name].inspecting = nil
 		if not done then members[p.name].nextInspect = GetTime() + 3 end
 	end
-	ClearInspectPlayer()
+	-- leave the data alone while your own Inspect window shows it
+	if not (InspectFrame and InspectFrame:IsShown()) then ClearInspectPlayer() end
 end
 
 -- INSPECT_TALENT_READY handler

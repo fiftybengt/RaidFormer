@@ -1,4 +1,4 @@
--- Raid group control in two phases (buttons on the Roster tab):
+-- Raid group control (Forming / Final / Manual buttons in the window footer):
 --  * Forming groups: RaidFormer controls the raid groups. You and everyone still waiting for
 --    inspect sit in the uninspected group (default 1); everyone else - inspected, or let in by
 --    you - goes to the other groups. Pressing it takes control, also over your own hand moves.

@@ -26,7 +26,7 @@ function UI:Init()
 	self.frame = f
 	f:SetWidth(WIDTH)
 	f:SetHeight(HEIGHT)
-	f:SetFrameStrata("DIALOG")
+	f:SetFrameStrata("HIGH") -- below popups (Save preset) and dropdown lists
 	f:SetToplevel(true)
 	f:SetClampedToScreen(true)
 	Skin.Backdrop(f, C.bg)
@@ -112,7 +112,10 @@ function UI:Init()
 	groupsLabel:SetPoint("RIGHT", self.groups, "LEFT", -8, 0)
 
 	f:SetScript("OnShow", function() UI:Redraw() end)
-	f:SetScript("OnHide", function() UI:Redraw() end) -- mini bar takes over
+	f:SetScript("OnHide", function()
+		RF.W.CloseMenus() -- no menu left floating without its window
+		UI:Redraw()      -- mini bar takes over
+	end)
 
 	-- throttled redraws; runs while the window is closed too (mini bar)
 	self.driver = CreateFrame("Frame", nil, UIParent)
@@ -131,6 +134,7 @@ function UI:Init()
 end
 
 function UI:SelectTab(index)
+	RF.W.CloseMenus()
 	self.current = index
 	for i, page in ipairs(self.pages) do
 		if i == index then page.frame:Show() else page.frame:Hide() end

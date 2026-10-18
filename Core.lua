@@ -64,11 +64,11 @@ function Core:DefaultProfile()
 		interval = 90, extras = "", freeText = "",
 		roles = roles, needs = needs, buffs = buffs, caps = caps,
 		autoDefaults = true, warnBefore = 60, -- myRole: nil = detect from talents
-		pendingGroup = 1, acceptedGroup = 2, -- raid group control: Forming / Final buttons (Roster tab)
+		pendingGroup = 1, acceptedGroup = 2, -- raid group control: Forming / Final / Manual (window footer)
 		raidWarnOnJoin = false, raidWarnText = "g1 vh",
 		inspectTimeout = 180, autoKick = true, raidUpdates = true, rejectWrongSpec = false,
 		requireInspect = true, remindInspect = true,
-		lfmStyle = "dashes", lfmIcon = "skull", -- announcement look (Setup tab)
+		lfmStyle = "dashes", lfmIcon = "skull", -- announcement look (Settings tab)
 		formationSource = "default", -- "default" (recommended), "preset:<name>" or "edited"
 	}
 end
@@ -231,6 +231,14 @@ function Core:OnWhisper(msg, sender)
 	local now = GetTime()
 	local m = RF.members[sender]
 	if m and m.inGroup and not RF.HOLDING[m.status] then return end -- already in the raid (kept by you)
+	if m and m.kickedByLeader and not RF.HOLDING[m.status] then
+		-- you kicked them: no automatic invite again until you Accept them (or clear the history)
+		if not m.kickNoticed then
+			m.kickNoticed = true
+			Print(sender .. " whispered again, but you removed them - Accept them on the Raid tab to let them in.")
+		end
+		return
+	end
 	if m and RF.HOLDING[m.status] then
 		-- still invited but whispering again: they missed or closed the invite popup, send it again
 		if m.status == "invited" and now - (m.invitedAt or now) >= REINVITE_AFTER and self:CanInvite() then
@@ -449,11 +457,13 @@ function Core:OnRosterUpdate(fromLogin)
 	local count = numRaid > 0 and numRaid or GetNumPartyMembers()
 	local prefix = numRaid > 0 and "raid" or "party"
 	local me = UnitName("player")
+	local units = {}
 	for i = 1, count do
 		local unit = prefix .. i
 		local name = UnitName(unit)
 		if name and name ~= me and name ~= UNKNOWNOBJECT then
 			inGroup[name] = true
+			units[name] = unit
 			local m = RF.members[name]
 			if not m then
 				-- joined without the addon inviting them: you (or an assist) let them in -> trusted
@@ -470,6 +480,7 @@ function Core:OnRosterUpdate(fromLogin)
 			elseif not m.inGroup and REJOINABLE[m.status] then
 				-- refused / removed / left and now back in the raid: someone invited them by hand -> trusted
 				m.status, m.joinedAt, m.manualJoin, m.manual, m.reason = "waiting", GetTime(), true, true, nil
+				m.kickedByLeader, m.kickNoticed = nil, nil
 				m.arrivedAt, m.readings, m.confirming, m.warned, m.nextInspect = nil, nil, nil, nil, nil
 				self:QueueJoinWarning()
 			end
@@ -494,6 +505,7 @@ function Core:OnRosterUpdate(fromLogin)
 			end
 		end
 	end
+	RF.Inspect.SetUnits(units)
 	RF.Groups:OnRosterUpdate()
 	self:Refresh()
 end
@@ -506,11 +518,24 @@ local function FormatToPattern(fmt)
 	return "^" .. escaped .. "$"
 end
 
+-- built once (CHAT_MSG_SYSTEM is frequent)
+local systemPatterns
+local function SystemPatterns()
+	if not systemPatterns then
+		systemPatterns = { invite = FormatToPattern(_G.ERR_INVITE_PLAYER_S), replies = {} }
+		for _, key in ipairs({ "ERR_DECLINE_GROUP_S", "ERR_ALREADY_IN_GROUP_S", "ERR_BAD_PLAYER_NAME_S" }) do
+			local pattern = FormatToPattern(_G[key])
+			if pattern then table.insert(systemPatterns.replies, { key = key, pattern = pattern }) end
+		end
+	end
+	return systemPatterns
+end
+
 function Core:OnSystemMessage(msg)
+	local patterns = SystemPatterns()
 	-- "You have invited X to join your group." for an invite the addon didn't send: you invited
 	-- them by hand, so they hold a slot right away and are trusted
-	local invitePattern = FormatToPattern(_G.ERR_INVITE_PLAYER_S)
-	local invited = invitePattern and msg:match(invitePattern)
+	local invited = patterns.invite and msg:match(patterns.invite)
 	if invited then
 		local m = RF.members[invited]
 		if not (m and (RF.HOLDING[m.status] or m.inGroup)) then
@@ -518,13 +543,14 @@ function Core:OnSystemMessage(msg)
 			RF.members[invited] = m
 			m.status, m.invitedAt, m.reason, m.kicked = "invited", GetTime(), nil, nil
 			m.manual, m.manualInvite = true, true
+			m.kickedByLeader, m.kickNoticed = nil, nil
 			self:Refresh()
 		end
 		return
 	end
-	for _, key in ipairs({ "ERR_DECLINE_GROUP_S", "ERR_ALREADY_IN_GROUP_S", "ERR_BAD_PLAYER_NAME_S" }) do
-		local pattern = FormatToPattern(_G[key])
-		local name = pattern and msg:match(pattern)
+	for _, reply in ipairs(patterns.replies) do
+		local key = reply.key
+		local name = msg:match(reply.pattern)
 		if name then
 			local m = RF.members[name]
 			if m and m.status == "invited" then
@@ -658,11 +684,11 @@ end
 function Core:Reject(m, reason, manual)
 	m.status, m.reason = "rejected", reason
 	if manual or (RF.profile.autoKick and self.running) then
-		self:Whisper(m.name, "Sorry, removed: " .. reason .. ".")
+		self:Whisper(m.name, manual and "Sorry, you were removed from the raid." or ("Sorry, removed: " .. reason .. "."))
 		UninviteUnit(m.name)
 	else
 		-- Auto kick off, or RaidFormer stopped (raid formed): they stay, so don't tell them they were
-		-- removed - you decide on the Roster tab
+		-- removed - you decide on the Raid tab
 		Print(string.format("%s didn't pass (%s) - still in the raid because %s.", m.name, reason,
 			self.running and "Auto kick is off" or "RaidFormer is stopped"))
 	end
@@ -686,7 +712,7 @@ function Core:PromoteIfNoInspect(m)
 	return true
 end
 
--- Roster tab spec menu: set a player's spec yourself (friends who never come to inspect, bear/cat ...)
+-- Raid tab spec menu: set a player's spec yourself (friends who never come to inspect, bear/cat ...)
 function Core:SetSpec(name, specKey)
 	local m = RF.members[name]
 	if not m or not RF.SPECS[specKey] then return end
@@ -713,7 +739,7 @@ function Core:LoadRecommended()
 	p.formationSource = "default"
 end
 
--- Raid, size or difficulty changed in the Setup tab. oldSize = the raid size before the change.
+-- Raid, size or difficulty changed in the Settings tab. oldSize = the raid size before the change.
 function Core:RaidSettingsChanged(oldSize)
 	local p = RF.profile
 	if p.autoDefaults and (p.formationSource or "default") == "default" then return self:LoadRecommended() end
@@ -756,11 +782,12 @@ function Core:BaselineText()
 	return "Based on: preset '" .. src:sub(8) .. "' (kept on raid change)"
 end
 
--- Manual overrides from the Roster tab
+-- Manual overrides from the Raid tab
 function Core:ManualAccept(name)
 	local m = RF.members[name]
 	if not m then return end
 	m.manual, m.kicked, m.verifiedLowAt = true, nil, nil
+	m.kickedByLeader, m.kickNoticed = nil, nil
 	if RF.UnitForName(name) then
 		m.status, m.reason = "accepted", nil
 	elseif m.spec then
@@ -775,6 +802,7 @@ function Core:ManualKick(name)
 	local m = RF.members[name]
 	if not m then return end
 	m.manual = nil
+	m.kickedByLeader, m.kickNoticed = true, nil -- their next whispers don't invite them again
 	if RF.UnitForName(name) then
 		self:Reject(m, "removed by leader", true)
 	else
@@ -881,7 +909,7 @@ function Core:Post(manual)
 	if p.postYell then queue[#queue + 1] = { msg = msg, chatType = "YELL" } end
 	self.nextPost = GetTime() + math.max(30, p.interval or 90)
 	if #queue == 0 then
-		if #(p.channels or {}) == 0 then Print("No announcement target set - pick channels in the Setup tab.") end
+		if #(p.channels or {}) == 0 then Print("No announcement target set - pick channels in the Settings tab.") end
 		return
 	end
 	self.sendQueue, self.nextSendAt = queue, 0
