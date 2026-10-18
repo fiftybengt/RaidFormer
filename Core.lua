@@ -27,7 +27,7 @@ RF.STATUS = {
 RF.HOLDING = { invited = true, waiting = true, accepted = true }
 
 local function Print(msg)
-	DEFAULT_CHAT_FRAME:AddMessage("|cff33ff99RaidFormer|r: " .. tostring(msg))
+	DEFAULT_CHAT_FRAME:AddMessage("|cff33ff99[RF]|r " .. tostring(msg))
 end
 RF.Print = Print
 
@@ -183,7 +183,7 @@ end
 
 function Core:Whisper(name, msg)
 	-- automatic whispers are marked so players can tell it's an addon talking, not you
-	SendChatMessage(RF.SafeChat("[RaidFormer] " .. msg), "WHISPER", nil, name)
+	SendChatMessage(RF.SafeChat("[RF] " .. msg), "WHISPER", nil, name)
 end
 
 function Core:CanInvite()
@@ -225,7 +225,8 @@ function Core:OnWhisper(msg, sender)
 	local lower = msg:lower()
 	-- other leaders' adverts start with LFM (raid icons stripped); an applicant may still say "lfm?" later on
 	local isAdvert = (lower:gsub("{.-}", "")):find("^%s*lfm") ~= nil
-	if isAdvert or lower:find("%[raidformer%]") or IsOwnReply(lower) then return end
+	-- "[RF]" = another RaidFormer answering ("[RaidFormer]" from older versions)
+	if isAdvert or lower:find("%[rf%]") or lower:find("%[raidformer%]") or IsOwnReply(lower) then return end
 
 	local now = GetTime()
 	local m = RF.members[sender]

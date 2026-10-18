@@ -23,7 +23,7 @@ Copy (or symlink) the `RaidFormer` folder into `World of Warcraft/Interface/AddO
    (`[TOC25N] LFM - [Need: ...] - ...`) or Need first (`TOC25N needs 2 heal, 5 dps - ...`).
    "Free text" (optional, up to 80 characters) goes right before `/w spec + GS`. If the line gets
    longer than 255 characters, the need list is shortened (ending in "...") and your free text stays.
-   Automatic whispers start with `[RaidFormer]` so players can tell an addon is answering;
+   Automatic whispers start with `[RF]` so players can tell an addon is answering;
    LFM posts, /raid messages and raid warnings don't.
    Once 5 or more spots are taken the raid count is added automatically, for any raid size:
    `LFM TOC25N [18/25] - GS 5.3k+ ...` (no count below 5); it follows people joining and leaving.
