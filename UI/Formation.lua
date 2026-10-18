@@ -3,6 +3,8 @@
 local _, RF = ...
 
 local w = {}
+RF.UI.widgets = RF.UI.widgets or {}
+RF.UI.widgets.formation = w -- for tests and debugging
 local sel = { mode = "need", preset = nil }
 
 local function P() return RF.profile end
@@ -71,6 +73,7 @@ function RF.UI.AddCap(class, spec)
 		end
 	end
 	caps[#caps + 1] = { class = class, spec = spec, max = 1 }
+	sel.scrollToEnd = true -- caps are at the bottom of the list: show the new one
 	Edited()
 end
 
@@ -152,24 +155,22 @@ local function Build(page)
 		W.Tip(b, W.ClassColor(class) .. RF.CLASS_NAMES[class] .. "|r", { "Click to pick the spec." })
 	end
 
-	w.needsLabel = W.Label(page, "Needs", "RaidFormerFontMuted")
-	w.needsLabel:SetPoint("TOPLEFT", 0, -128)
-	w.needSummary = W.Label(page, "", "RaidFormerFontMuted")
-	w.needSummary:SetPoint("TOPRIGHT", page, "TOPLEFT", 616, -128)
+	-- needs, warning and caps scroll together, so any number of them fits
+	w.area = W.ScrollArea(page, 616, 194)
+	w.area:SetPoint("TOPLEFT", 0, -124)
+	local box = w.area.child
+	w.needsLabel = W.Label(box, "Needs", "RaidFormerFontMuted")
+	w.needSummary = W.Label(box, "", "RaidFormerFontMuted")
 	w.needSummary:SetJustifyH("RIGHT")
 	w.needChips = {}
-	w.needEmpty = W.Label(page, "None - every spot is open to any class.", "RaidFormerFontSmall")
-	w.needEmpty:SetPoint("TOPLEFT", 0, -144)
+	w.needEmpty = W.Label(box, "None - every spot is open to any class.", "RaidFormerFontSmall")
 	W.SetColor(w.needEmpty, C.muted)
-
-	w.warning = W.Banner(page, 616)
-	w.warning:SetPoint("TOPLEFT", 0, -228)
-
-	w.capsLabel = W.Label(page, "Caps", "RaidFormerFontMuted")
-	w.capsLabel:SetPoint("TOPLEFT", 0, -252)
+	w.warning = W.Banner(box, 596)
+	w.capsLabel = W.Label(box, "Caps", "RaidFormerFontMuted")
+	w.capSummary = W.Label(box, "", "RaidFormerFontMuted")
+	w.capSummary:SetJustifyH("RIGHT")
 	w.capChips = {}
-	w.capEmpty = W.Label(page, "None.", "RaidFormerFontSmall")
-	w.capEmpty:SetPoint("TOPLEFT", 0, -268)
+	w.capEmpty = W.Label(box, "None - no class or spec limit.", "RaidFormerFontSmall")
 	W.SetColor(w.capEmpty, C.muted)
 
 	----------------------------------------------------------------- presets
@@ -199,7 +200,7 @@ local function Build(page)
 	del:SetPoint("LEFT", save, "RIGHT", 4, 0)
 	W.Tip(load, "Load preset", { "Your baseline: changing raid, size or difficulty afterwards keeps it." })
 
-	local hint = W.Label(page, "Shift-click - / + to step by 5.  Needs are named in the LFM line only once they're all that's left.", "RaidFormerFontMuted")
+	local hint = W.Label(page, "Scroll the needs and caps with the mouse wheel.  Shift-click - / + steps by 5.", "RaidFormerFontMuted")
 	hint:SetPoint("BOTTOMLEFT", 0, 4)
 end
 
@@ -214,11 +215,25 @@ local function Refresh(page)
 	w.mode:SetValue(sel.mode)
 	w.addHint:SetText(sel.mode == "cap" and "Add a cap - click a class:" or "Add a need - click a class:")
 
+	local box, AREA_W = w.area.child, 596
+	local y = 0
+	local function Place(region, x, dy, right)
+		region:ClearAllPoints()
+		if right then
+			region:SetPoint("TOPRIGHT", box, "TOPLEFT", x, -y)
+		else
+			region:SetPoint("TOPLEFT", box, "TOPLEFT", x, -y)
+		end
+		if dy then y = y + dy end
+	end
+
 	-- need chips: "2x hpal" [-][+][x]
+	Place(w.needsLabel, 0)
+	Place(w.needSummary, AREA_W, 16, true)
 	for i, need in ipairs(p.needs) do
 		local chip = w.needChips[i]
 		if not chip then
-			chip = W.Chip(page, {
+			chip = W.Chip(box, {
 				{ text = "-", onClick = function(c) c.item.count = math.max(1, (c.item.count or 1) - 1); Edited() end },
 				{ text = "+", onClick = function(c) c.item.count = math.min(40, (c.item.count or 1) + 1); Edited() end },
 				{ text = "x", onClick = function(c) Remove(P().needs, c.item); Edited() end },
@@ -231,18 +246,32 @@ local function Refresh(page)
 		chip:Set(W.ClassColor(need.class) .. (count > 1 and (count .. "x ") or "") .. RF.Comp.NeedLabel(need) .. "|r", C.button,
 			role and function(tex) RF.Skin.SetRoleIcon(tex, role) end or function(tex) RF.Skin.SetClassIcon(tex, need.class) end)
 	end
-	W.Flow(w.needChips, #p.needs, page, 0, -144, 616, 4)
-	if #p.needs == 0 then w.needEmpty:Show() else w.needEmpty:Hide() end
+	if #p.needs == 0 then
+		w.needEmpty:Show()
+		Place(w.needEmpty, 0, 18)
+	else
+		w.needEmpty:Hide()
+		y = y + W.Flow(w.needChips, #p.needs, box, 0, -y, AREA_W) * 20
+	end
 	local players = 0
 	for _, need in ipairs(p.needs) do players = players + (need.count or 1) end
 	w.needSummary:SetText(string.format("%d need%s, %d player%s", #p.needs, #p.needs == 1 and "" or "s", players, players == 1 and "" or "s"))
-	w.warning:SetMessages(RF.Comp.NeedsOverflow(p))
+	local problems = RF.Comp.NeedsOverflow(p)
+	w.warning:SetMessages(problems)
+	if #problems > 0 then
+		y = y + 4
+		Place(w.warning, 0, 22)
+	end
+	y = y + 8
 
 	-- cap chips: "Druid max 3", "rdru max 1"
+	Place(w.capsLabel, 0)
+	Place(w.capSummary, AREA_W, 16, true)
+	w.capSummary:SetText(#p.caps > 0 and (#p.caps .. " cap" .. (#p.caps == 1 and "" or "s")) or "")
 	for i, cap in ipairs(p.caps) do
 		local chip = w.capChips[i]
 		if not chip then
-			chip = W.Chip(page, {
+			chip = W.Chip(box, {
 				{ text = "-", onClick = function(c) c.item.max = math.max(0, (c.item.max or 0) - 1); Edited() end },
 				{ text = "+", onClick = function(c) c.item.max = math.min(40, (c.item.max or 0) + 1); Edited() end },
 				{ text = "x", onClick = function(c) Remove(P().caps, c.item); Edited() end },
@@ -254,8 +283,18 @@ local function Refresh(page)
 		chip:Set(W.ClassColor(cap.class) .. what .. "|r max " .. (cap.max or 0), C.button,
 			function(tex) RF.Skin.SetClassIcon(tex, cap.class) end)
 	end
-	W.Flow(w.capChips, #p.caps, page, 0, -268, 616, 2)
-	if #p.caps == 0 then w.capEmpty:Show() else w.capEmpty:Hide() end
+	if #p.caps == 0 then
+		w.capEmpty:Show()
+		Place(w.capEmpty, 0, 18)
+	else
+		w.capEmpty:Hide()
+		y = y + W.Flow(w.capChips, #p.caps, box, 0, -y, AREA_W) * 20
+	end
+	w.area:SetContentHeight(y)
+	if sel.scrollToEnd then
+		sel.scrollToEnd = nil
+		w.area:ScrollTo(w.area.range)
+	end
 
 	w.presetDrop:SetValue(sel.preset, sel.preset or "Select preset")
 end

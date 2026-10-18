@@ -386,10 +386,10 @@ function W.Chip(parent, actions)
 	return c
 end
 
--- Lays out shown chips left to right, wrapping; hides the ones that don't fit in maxRows.
--- Returns the number of rows used.
+-- Lays out the first `count` chips left to right, wrapping; hides the rest and the ones that don't
+-- fit in maxRows (nil = no limit). Returns the rows used and how many chips didn't fit.
 function W.Flow(chips, count, parent, x0, y0, maxWidth, maxRows)
-	local x, y, rows = 0, 0, (count > 0) and 1 or 0
+	local x, y, rows, hidden = 0, 0, (count > 0) and 1 or 0, 0
 	for i = 1, #chips do
 		local c = chips[i]
 		if i > count then
@@ -399,8 +399,9 @@ function W.Flow(chips, count, parent, x0, y0, maxWidth, maxRows)
 			if x > 0 and x + w > maxWidth then
 				x, y, rows = 0, y + 20, rows + 1
 			end
-			if rows > maxRows then
+			if maxRows and rows > maxRows then
 				c:Hide()
+				hidden = hidden + 1
 			else
 				c:ClearAllPoints()
 				c:SetPoint("TOPLEFT", parent, "TOPLEFT", x0 + x, y0 - y)
@@ -409,7 +410,59 @@ function W.Flow(chips, count, parent, x0, y0, maxWidth, maxRows)
 			end
 		end
 	end
-	return math.min(rows, maxRows)
+	return maxRows and math.min(rows, maxRows) or rows, hidden
+end
+
+-- Scrolling area: put content on area.child, then call area:SetContentHeight(h). Mouse wheel
+-- scrolls; a slim scrollbar shows only when the content is taller than the area.
+function W.ScrollArea(parent, width, height)
+	local area = CreateFrame("ScrollFrame", NextName("Area"), parent)
+	area:SetWidth(width)
+	area:SetHeight(height)
+	local child = CreateFrame("Frame", nil, area)
+	child:SetWidth(width - 10)
+	child:SetHeight(height)
+	area:SetScrollChild(child)
+	area.child = child
+
+	local bar = CreateFrame("Slider", nil, area)
+	bar:SetOrientation("VERTICAL")
+	bar:SetWidth(6)
+	bar:SetPoint("TOPRIGHT", 0, 0)
+	bar:SetPoint("BOTTOMRIGHT", 0, 0)
+	Skin.Backdrop(bar, C.input)
+	bar:SetThumbTexture(Skin.WHITE)
+	local thumb = bar:GetThumbTexture()
+	if thumb then
+		thumb:SetVertexColor(C.muted[1], C.muted[2], C.muted[3], 0.7)
+		thumb:SetWidth(6)
+		thumb:SetHeight(24)
+	end
+	bar:SetMinMaxValues(0, 0)
+	bar:SetValue(0)
+	bar:SetScript("OnValueChanged", function(_, value) area:SetVerticalScroll(value) end)
+	bar:Hide()
+	area.bar = bar
+
+	area:EnableMouseWheel(true)
+	area:SetScript("OnMouseWheel", function(self, delta)
+		self:ScrollTo(self.offset - delta * 20)
+	end)
+	area.offset, area.range = 0, 0
+
+	function area:ScrollTo(value)
+		self.offset = math.max(0, math.min(self.range, value))
+		self.bar:SetValue(self.offset)
+		self:SetVerticalScroll(self.offset)
+	end
+	function area:SetContentHeight(h)
+		self.child:SetHeight(math.max(h, height))
+		self.range = math.max(0, h - height)
+		self.bar:SetMinMaxValues(0, self.range)
+		if self.range > 0 then self.bar:Show() else self.bar:Hide() end
+		self:ScrollTo(self.offset) -- stays in range after content shrinks
+	end
+	return area
 end
 
 -- [icon] Label  [-] n [+]   onChange(newValue); shift-click steps by 5

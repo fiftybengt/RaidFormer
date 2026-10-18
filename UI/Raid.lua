@@ -4,6 +4,8 @@
 local _, RF = ...
 
 local w = {}
+RF.UI.widgets = RF.UI.widgets or {}
+RF.UI.widgets.raid = w -- for tests and debugging
 local ROWS, ROW_H = 15, 20
 local ORDER = { accepted = 1, waiting = 2, invited = 3, refused = 4, rejected = 5, timeout = 6, declined = 7, expired = 8, left = 9 }
 
@@ -393,27 +395,53 @@ local function Refresh(page)
 		end
 	end
 
-	-- needs
-	local n = 0
+	-- needs: still missing first; what doesn't fit in two rows goes into a "+N more" chip
+	local entries = {}
 	for i, need in ipairs(p.needs) do
-		n = n + 1
-		local chip = w.needChips[n] or W.Chip(page)
-		w.needChips[n] = chip
 		local have, want = counts.need[i] or 0, need.count or 1
-		local label = RF.Comp.NeedLabel(need) .. (want > 1 and (" " .. have .. "/" .. want) or "")
-		chip:Set(W.ClassColor(need.class) .. label .. "|r", have >= want and C.goodBg or C.badBg)
+		entries[#entries + 1] = { text = W.ClassColor(need.class) .. RF.Comp.NeedLabel(need) .. (want > 1 and (" " .. have .. "/" .. want) or "") .. "|r",
+			plain = RF.Comp.NeedLabel(need) .. " " .. have .. "/" .. want, met = have >= want, order = i }
 	end
 	for _, buff in ipairs(RF.BUFFS) do
 		local want = p.buffs[buff]
 		if want then
-			n = n + 1
-			local chip = w.needChips[n] or W.Chip(page)
-			w.needChips[n] = chip
 			local have = counts.buff[buff] or 0
-			chip:Set(RF.BUFF_SHORT[buff] .. " " .. have .. "/" .. want, have >= want and C.goodBg or C.badBg)
+			local text = RF.BUFF_SHORT[buff] .. " " .. have .. "/" .. want
+			entries[#entries + 1] = { text = text, plain = text, met = have >= want, order = 100 + #entries }
 		end
 	end
-	W.Flow(w.needChips, n, page, 0, -50, 616, 2)
+	table.sort(entries, function(a, b)
+		if a.met ~= b.met then return not a.met end
+		return a.order < b.order
+	end)
+	for i, e in ipairs(entries) do
+		local chip = w.needChips[i] or W.Chip(page)
+		w.needChips[i] = chip
+		chip:Set(e.text, e.met and C.goodBg or C.badBg)
+	end
+	if not w.moreChip then
+		w.moreChip = W.Chip(page)
+		w.moreChip:EnableMouse(true)
+	end
+	w.moreChip:Hide()
+	local _, hidden = W.Flow(w.needChips, #entries, page, 0, -50, 616, 2)
+	if hidden > 0 then
+		-- room for the "+N more" chip: drop chips from the end until everything fits
+		for shown = #entries - 1, 0, -1 do
+			local list = {}
+			for i = 1, shown do list[i] = w.needChips[i] end
+			local rest = {}
+			for i = shown + 1, #entries do rest[#rest + 1] = (entries[i].met and "in: " or "missing: ") .. entries[i].plain end
+			w.moreChip:Set("+" .. (#entries - shown) .. " more", C.button)
+			W.Tip(w.moreChip, "More needs", rest)
+			list[#list + 1] = w.moreChip
+			local _, left = W.Flow(list, #list, page, 0, -50, 616, 2)
+			if left == 0 then
+				for i = shown + 1, #w.needChips do w.needChips[i]:Hide() end
+				break
+			end
+		end
+	end
 
 	-- LFM line, problems
 	w.lfm:SetPoint("TOPLEFT", 0, -94)
