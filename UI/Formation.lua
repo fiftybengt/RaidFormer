@@ -1,20 +1,14 @@
--- Formation tab: role counts, class/spec needs, class caps, presets.
+-- Formation tab: role counts, class/spec needs and caps (as chips, added from a class-icon grid),
+-- presets.
 local _, RF = ...
 
 local w = {}
-local sel = { needClass = "SHAMAN", needSpec = "ANY", needCount = 1, capClass = "DEATHKNIGHT", capSpec = "ANY", capMax = 4, preset = nil }
-
--- one-click needs for the specs raid leaders ask for most
-local QUICK_NEEDS = {
-	{ "Resto Shaman", "SHAMAN", "SHAMAN_RESTO" }, { "Holy Paladin", "PALADIN", "PALADIN_HOLY" },
-	{ "Disc Priest", "PRIEST", "PRIEST_DISC" },   { "Resto Druid", "DRUID", "DRUID_RESTO" },
-	{ "Prot Paladin", "PALADIN", "PALADIN_PROT" }, { "Prot Warrior", "WARRIOR", "WARRIOR_PROT" },
-	{ "DK Tank", "DEATHKNIGHT", "DK_TANK" },       { "Bear Tank", "DRUID", "DRUID_BEAR" },
-	{ "Any Shaman", "SHAMAN", nil },               { "Ret Paladin", "PALADIN", "PALADIN_RET" },
-}
+RF.UI.widgets = RF.UI.widgets or {}
+RF.UI.widgets.formation = w -- for tests and debugging
+local sel = { mode = "need", preset = nil }
 
 local function P() return RF.profile end
-local function Changed() RF.UI:Refresh() end
+local function Changed() RF.UI:Redraw() end
 -- your own change: the formation becomes your baseline (kept when the raid changes)
 local function Edited() RF.Core:MarkEdited(); Changed() end
 
@@ -57,204 +51,145 @@ local function LoadPreset(name)
 end
 
 -- Adds a need, or raises the count of an identical one.
-local function AddNeed(class, spec, count, setCount)
+function RF.UI.AddNeed(class, spec, count)
 	local needs = P().needs
 	for _, need in ipairs(needs) do
 		if need.class == class and need.spec == spec then
-			need.count = setCount and count or math.min(40, (need.count or 1) + count)
+			need.count = math.min(40, (need.count or 1) + (count or 1))
 			return Edited()
 		end
 	end
-	needs[#needs + 1] = { class = class, spec = spec, count = count }
+	needs[#needs + 1] = { class = class, spec = spec, count = count or 1 }
 	Edited()
 end
 
-local function RoleOfNeed(need)
-	if need.spec and RF.SPECS[need.spec] then return RF.ROLE_NAMES[RF.SPECS[need.spec].role] end
-	return "any role"
+-- Adds a cap (max 1 to start, raise it with +), or raises an identical one.
+function RF.UI.AddCap(class, spec)
+	local caps = P().caps
+	for _, cap in ipairs(caps) do
+		if cap.class == class and cap.spec == spec then
+			cap.max = math.min(40, (cap.max or 0) + 1)
+			return Edited()
+		end
+	end
+	caps[#caps + 1] = { class = class, spec = spec, max = 1 }
+	sel.scrollToEnd = true -- caps are at the bottom of the list: show the new one
+	Edited()
+end
+
+local function Remove(list, item)
+	for i, x in ipairs(list) do
+		if x == item then table.remove(list, i); return end
+	end
+end
+
+-- Class icon clicked: pick the spec (or any) to add as a need or a cap.
+local classMenu
+local function ShowClassMenu(class, anchor)
+	classMenu = classMenu or RF.W.NewMenuFrame()
+	local isCap = sel.mode == "cap"
+	local menu = { { text = (isCap and "Cap: " or "Need: ") .. RF.CLASS_NAMES[class], isTitle = true, notCheckable = true } }
+	menu[#menu + 1] = {
+		text = isCap and "Any spec (class cap)" or ("Any " .. RF.CLASS_NAMES[class]), notCheckable = true,
+		func = function() if isCap then RF.UI.AddCap(class, nil) else RF.UI.AddNeed(class, nil, 1) end end,
+	}
+	for _, key in ipairs(RF.CLASS_SPECS[class]) do
+		local spec = RF.SPECS[key]
+		menu[#menu + 1] = {
+			text = spec.name .. " (" .. spec.short .. ")", notCheckable = true,
+			func = function() if isCap then RF.UI.AddCap(class, key) else RF.UI.AddNeed(class, key, 1) end end,
+		}
+	end
+	EasyMenu(menu, classMenu, anchor, 0, 0, "MENU")
 end
 
 local function Build(page)
-	local W = RF.W
+	local W, Skin = RF.W, RF.Skin
+	local C = Skin.C
 
 	----------------------------------------------------------------- roles
-	local h = W.Header(page, "Roles")
+	local h = W.Header(page, "Roles", 616)
 	h:SetPoint("TOPLEFT", 0, 0)
 	w.roles = {}
-	for i, role in ipairs(RF.ROLES) do
-		local s = W.Spinner(page, RF.ROLE_NAMES[role], 75, 0, 40, function(v) P().roles[role] = v; Edited() end)
-		local col, row = (i - 1) % 2, math.floor((i - 1) / 2)
-		s:SetPoint("TOPLEFT", col * 180, -20 - row * 24)
+	local layout = {
+		{ "tank", "Tank", 0, -20 }, { "heal", "Healer", 150, -20 }, { "mdps", "Melee", 300, -20 },
+		{ "rdps", "Ranged", 0, -44 }, { "flex", "Any DPS", 150, -44 },
+	}
+	for _, l in ipairs(layout) do
+		local role = l[1]
+		local s = W.Spinner(page, l[2], 50, 0, 40, function(v) P().roles[role] = v; Edited() end, role)
+		s:SetPoint("TOPLEFT", l[3], l[4])
 		w.roles[role] = s
 	end
-	-- "Any DPS": spots for melee or ranged, whoever comes first
-	local flex = W.Spinner(page, "Any DPS", 75, 0, 40, function(v) P().roles.flex = v; Edited() end)
-	flex:SetPoint("TOPLEFT", 370, -20)
-	flex:EnableMouse(true)
-	flex:SetScript("OnEnter", function(self)
-		GameTooltip:SetOwner(self, "ANCHOR_TOP")
-		GameTooltip:AddLine("Any DPS", 1, 1, 1)
-		GameTooltip:AddLine("Spots for melee or ranged, whoever comes first - for when you don't mind which. Shown as 'dps' in the LFM line.", 1, 1, 0.8, true)
-		GameTooltip:Show()
-	end)
-	flex:SetScript("OnLeave", function() GameTooltip:Hide() end)
-	w.roles.flex = flex
-	w.total = W.Label(page, "", "GameFontNormal")
-	w.total:SetPoint("TOPRIGHT", page, "TOPLEFT", 560, -2)
-	w.total:SetJustifyH("RIGHT")
-
+	W.Tip(w.roles.flex, "Any DPS", { "Spots for melee or ranged, whoever comes first - for when you don't mind which.",
+		"Shown as 'dps' in the LFM line." })
+	w.total = W.Label(page, "", "RaidFormerFontBig")
+	w.total:SetPoint("TOPLEFT", 470, -22)
 	w.loadDefault = W.Button(page, "Load recommended", 130, 20, function()
 		RF.Core:LoadRecommended() -- follows the raid again from now on
 		Changed()
 	end)
-	w.loadDefault:SetPoint("TOPLEFT", 370, -44)
-	w.baseline = W.Label(page, "", "GameFontDisableSmall")
-	w.baseline:SetPoint("TOPLEFT", 370, -66)
-	w.baseline:SetWidth(190)
+	w.loadDefault:SetPoint("TOPLEFT", 300, -44)
+	W.Tip(w.loadDefault, "Load recommended", { "The recommended setup for this raid and size; it follows raid changes again." })
+	w.baseline = W.Label(page, "", "RaidFormerFontMuted")
+	w.baseline:SetPoint("TOPLEFT", 470, -40)
+	w.baseline:SetWidth(146)
 
-	----------------------------------------------------------------- class/spec needs
-	h = W.Header(page, "Class / spec needs")
+	----------------------------------------------------------------- needs & caps
+	h = W.Header(page, "Class / spec needs and caps", 616)
 	h:SetPoint("TOPLEFT", 0, -76)
-	h.line:SetWidth(350)
-	w.needSummary = W.Label(page, "", "GameFontHighlightSmall")
-	w.needSummary:SetPoint("TOPRIGHT", page, "TOPLEFT", 350, -78)
+	w.mode = W.Segmented(page, {
+		{ text = "Need", value = "need", width = 52, tip = { "Add a need", { "Reserves a spot for that class or spec." } } },
+		{ text = "Cap", value = "cap", width = 52, tip = { "Add a cap", { "Maximum of a class, or of one spec (e.g. max 1 rdru)." } } },
+	}, 52, function(v) sel.mode = v; Changed() end)
+	w.mode:SetPoint("TOPLEFT", 0, -96)
+	w.addHint = W.Label(page, "", "RaidFormerFontMuted")
+	w.addHint:SetPoint("TOPLEFT", 114, -100)
+	for i, class in ipairs(RF.CLASSES) do
+		local b = W.Button(page, "", 22, 22, function(self) ShowClassMenu(class, self) end)
+		b:SetPoint("TOPLEFT", 238 + (i - 1) * 25, -95)
+		local icon = b:CreateTexture(nil, "ARTWORK")
+		icon:SetPoint("TOPLEFT", 2, -2)
+		icon:SetPoint("BOTTOMRIGHT", -2, 2)
+		Skin.SetClassIcon(icon, class)
+		W.Tip(b, W.ClassColor(class) .. RF.CLASS_NAMES[class] .. "|r", { "Click to pick the spec." })
+	end
+
+	-- needs, warning and caps scroll together, so any number of them fits
+	w.area = W.ScrollArea(page, 616, 194)
+	w.area:SetPoint("TOPLEFT", 0, -124)
+	local box = w.area.child
+	w.needsLabel = W.Label(box, "Needs", "RaidFormerFontMuted")
+	w.needSummary = W.Label(box, "", "RaidFormerFontMuted")
 	w.needSummary:SetJustifyH("RIGHT")
-
-	w.needClass = W.Dropdown(page, 90, function() return W.ClassItems() end, function(value)
-		sel.needClass, sel.needSpec = value, "ANY"
-		w.needSpec:SetValue("ANY", "Any spec")
-	end)
-	w.needClass:SetPoint("TOPLEFT", -16, -92)
-	w.needSpec = W.Dropdown(page, 90, function() return W.SpecItems(sel.needClass, true) end, function(value)
-		sel.needSpec = value
-	end)
-	w.needSpec:SetPoint("LEFT", w.needClass, "RIGHT", -28, 0)
-	w.needCount = W.EditBox(page, 20, true, function(text) sel.needCount = math.max(1, tonumber(text) or 1) end, 2)
-	w.needCount:SetPoint("LEFT", w.needSpec, "RIGHT", -6, 2)
-	w.needAdd = W.Button(page, "Add", 40, 20, function()
-		sel.needCount = math.max(1, tonumber(w.needCount:GetText()) or 1)
-		AddNeed(sel.needClass, (sel.needSpec ~= "ANY") and sel.needSpec or nil, sel.needCount, true)
-	end)
-	w.needAdd:SetPoint("LEFT", w.needCount, "RIGHT", 4, 0)
-
-	local cols = { { "Class", 4 }, { "Spec", 100 }, { "Role", 196 }, { "Count", 268 } }
-	for _, c in ipairs(cols) do
-		local l = W.Label(page, c[1], "GameFontNormalSmall")
-		l:SetPoint("TOPLEFT", c[2], -126)
-	end
-
-	w.needList = W.ScrollList(page, 360, 10, 20, function(row)
-		row.class = W.Label(row, "", "GameFontHighlightSmall"); row.class:SetPoint("LEFT", 4, 0); row.class:SetWidth(94)
-		row.spec = W.Label(row, "", "GameFontHighlightSmall"); row.spec:SetPoint("LEFT", 100, 0); row.spec:SetWidth(94)
-		row.role = W.Label(row, "", "GameFontHighlightSmall"); row.role:SetPoint("LEFT", 196, 0); row.role:SetWidth(70)
-		row.minus = W.Button(row, "-", 18, 18, function()
-			row.data.count = math.max(1, (row.data.count or 1) - 1)
-			Edited()
-		end)
-		row.minus:SetPoint("LEFT", 262, 0)
-		row.count = W.Label(row, "", "GameFontHighlight"); row.count:SetWidth(20); row.count:SetJustifyH("CENTER")
-		row.count:SetPoint("LEFT", row.minus, "RIGHT", 0, 0)
-		row.plus = W.Button(row, "+", 18, 18, function()
-			row.data.count = math.min(40, (row.data.count or 1) + 1)
-			Edited()
-		end)
-		row.plus:SetPoint("LEFT", row.count, "RIGHT", 0, 0)
-		row.remove = W.Button(row, "x", 18, 18, function()
-			for i, need in ipairs(P().needs) do
-				if need == row.data then table.remove(P().needs, i); break end
-			end
-			Edited()
-		end)
-		row.remove:SetPoint("RIGHT", -2, 0)
-	end, function(row, need)
-		row.class:SetText(W.ClassColor(need.class) .. RF.CLASS_NAMES[need.class] .. "|r")
-		row.spec:SetText(need.spec and RF.SPECS[need.spec].name or "|cff999999Any spec|r")
-		row.role:SetText(RoleOfNeed(need))
-		row.count:SetText(need.count or 1)
-	end)
-	w.needList:SetPoint("TOPLEFT", 0, -140)
-
-	w.needWarning = W.Label(page, "", "GameFontHighlightSmall")
-	w.needWarning:SetPoint("TOPLEFT", 0, -343)
-	w.needWarning:SetWidth(350)
-
-	----------------------------------------------------------------- class caps
-	h = W.Header(page, "Class / spec caps (max)")
-	h:SetPoint("TOPLEFT", 370, -76)
-	h.line:SetWidth(190)
-
-	w.capClass = W.Dropdown(page, 62, function() return W.ClassItems() end, function(value)
-		sel.capClass, sel.capSpec = value, "ANY"
-		w.capSpec:SetValue("ANY", "Any spec")
-	end)
-	w.capClass:SetPoint("TOPLEFT", 354, -92)
-	w.capSpec = W.Dropdown(page, 62, function() return W.SpecItems(sel.capClass, true) end, function(value)
-		sel.capSpec = value
-	end)
-	w.capSpec:SetPoint("LEFT", w.capClass, "RIGHT", -28, 0)
-	local maxLabel = W.Label(page, "Max", "GameFontHighlightSmall")
-	maxLabel:SetPoint("TOPLEFT", 372, -122)
-	w.capMax = W.EditBox(page, 20, true, function(text) sel.capMax = tonumber(text) or 0 end, 2)
-	w.capMax:SetPoint("LEFT", maxLabel, "RIGHT", 8, 0)
-	w.capAdd = W.Button(page, "Add", 36, 20, function()
-		sel.capMax = tonumber(w.capMax:GetText()) or sel.capMax
-		local spec = (sel.capSpec ~= "ANY") and sel.capSpec or nil
-		local caps = P().caps
-		for _, cap in ipairs(caps) do
-			if cap.class == sel.capClass and cap.spec == spec then cap.max = sel.capMax; return Edited() end
-		end
-		caps[#caps + 1] = { class = sel.capClass, spec = spec, max = sel.capMax }
-		Edited()
-	end)
-	w.capAdd:SetPoint("LEFT", w.capMax, "RIGHT", 4, 0)
-
-	w.capList = W.ScrollList(page, 190, 3, 20, function(row)
-		row.text = W.Label(row, "", "GameFontHighlightSmall")
-		row.text:SetPoint("LEFT", 4, 0)
-		row.text:SetWidth(166)
-		row.remove = W.Button(row, "x", 18, 18, function()
-			for i, cap in ipairs(P().caps) do
-				if cap == row.data then table.remove(P().caps, i); break end
-			end
-			Edited()
-		end)
-		row.remove:SetPoint("RIGHT", -2, 0)
-	end, function(row, cap)
-		local what = cap.spec and RF.SPECS[cap.spec] and (RF.CLASS_NAMES[cap.class] .. " - " .. RF.SPECS[cap.spec].name) or RF.CLASS_NAMES[cap.class]
-		row.text:SetText(string.format("%s%s|r max %d", W.ClassColor(cap.class), what, cap.max))
-	end)
-	w.capList:SetPoint("TOPLEFT", 370, -144)
-
-	----------------------------------------------------------------- quick add needs
-	h = W.Header(page, "Quick add need (+1)")
-	h:SetPoint("TOPLEFT", 370, -214)
-	h.line:SetWidth(190)
-	for i, q in ipairs(QUICK_NEEDS) do
-		local label, class, spec = q[1], q[2], q[3]
-		local b = W.Button(page, label, 93, 20, function() AddNeed(class, spec, 1) end)
-		local col, row = (i - 1) % 2, math.floor((i - 1) / 2)
-		b:SetPoint("TOPLEFT", 370 + col * 96, -232 - row * 22)
-	end
+	w.needChips = {}
+	w.needEmpty = W.Label(box, "None - every spot is open to any class.", "RaidFormerFontSmall")
+	W.SetColor(w.needEmpty, C.muted)
+	w.warning = W.Banner(box, 596)
+	w.capsLabel = W.Label(box, "Caps", "RaidFormerFontMuted")
+	w.capSummary = W.Label(box, "", "RaidFormerFontMuted")
+	w.capSummary:SetJustifyH("RIGHT")
+	w.capChips = {}
+	w.capEmpty = W.Label(box, "None - no class or spec limit.", "RaidFormerFontSmall")
+	W.SetColor(w.capEmpty, C.muted)
 
 	----------------------------------------------------------------- presets
-	h = W.Header(page, "Presets")
-	h:SetPoint("TOPLEFT", 0, -358)
-	h.line:SetWidth(560)
-	w.presetDrop = W.Dropdown(page, 150, function()
-		local items = {}
-		local names = {}
+	h = W.Header(page, "Presets", 616)
+	h:SetPoint("TOPLEFT", 0, -324)
+	w.presetDrop = W.Dropdown(page, 180, function()
+		local items, names = {}, {}
 		for name in pairs(RF.db.presets) do names[#names + 1] = name end
 		table.sort(names)
 		for _, name in ipairs(names) do items[#items + 1] = { text = name, value = name } end
-		if #items == 0 then items[1] = { text = "(none saved)", value = nil } end
+		if #items == 0 then items[1] = { text = "(none saved)", value = nil, disabled = true } end
 		return items
 	end, function(value) sel.preset = value end)
-	w.presetDrop:SetPoint("TOPLEFT", -16, -372)
-	local load = W.Button(page, "Load", 60, 22, function() if sel.preset then LoadPreset(sel.preset) end end)
-	load:SetPoint("LEFT", w.presetDrop, "RIGHT", -6, 2)
-	local save = W.Button(page, "Save as...", 80, 22, function() StaticPopup_Show("RAIDFORMER_SAVE_PRESET") end)
+	w.presetDrop:SetPoint("TOPLEFT", 0, -344)
+	local load = W.Button(page, "Load", 60, 20, function() if sel.preset then LoadPreset(sel.preset) end end)
+	load:SetPoint("LEFT", w.presetDrop, "RIGHT", 6, 0)
+	local save = W.Button(page, "Save as...", 80, 20, function() StaticPopup_Show("RAIDFORMER_SAVE_PRESET") end)
 	save:SetPoint("LEFT", load, "RIGHT", 4, 0)
-	local del = W.Button(page, "Delete", 60, 22, function()
+	local del = W.Button(page, "Delete", 60, 20, function()
 		if sel.preset and RF.db.presets[sel.preset] then
 			RF.db.presets[sel.preset] = nil
 			RF.Print("Preset deleted: " .. sel.preset)
@@ -263,31 +198,103 @@ local function Build(page)
 		end
 	end)
 	del:SetPoint("LEFT", save, "RIGHT", 4, 0)
+	W.Tip(load, "Load preset", { "Your baseline: changing raid, size or difficulty afterwards keeps it." })
+
+	local hint = W.Label(page, "Scroll the needs and caps with the mouse wheel.  Shift-click - / + steps by 5.", "RaidFormerFontMuted")
+	hint:SetPoint("BOTTOMLEFT", 0, 4)
 end
 
 local function Refresh(page)
+	local W, C = RF.W, RF.Skin.C
 	local p = P()
 	for role, s in pairs(w.roles) do s:SetValue(p.roles[role] or 0) end
-	w.baseline:SetText(RF.Core:BaselineText())
 	local total = RF.Comp.RoleTotal(p)
-	local color = (total == p.size) and "|cff40ff40" or "|cffff4040"
-	w.total:SetText(string.format("Total: %s%d|r / %d", color, total, p.size))
+	w.total:SetText(string.format("Total  %s%d|r / %d", RF.Skin.Hex(total == p.size and C.good or C.bad), total, p.size))
+	w.baseline:SetText(RF.Core:BaselineText())
 
-	w.needClass:SetValue(sel.needClass)
-	w.needSpec:SetValue(sel.needSpec, sel.needSpec == "ANY" and "Any spec" or RF.SPECS[sel.needSpec].name)
-	if not w.needCount:HasFocus() then w.needCount:SetText(sel.needCount) end
-	w.needList:SetData(p.needs)
+	w.mode:SetValue(sel.mode)
+	w.addHint:SetText(sel.mode == "cap" and "Add a cap - click a class:" or "Add a need - click a class:")
 
+	local box, AREA_W = w.area.child, 596
+	local y = 0
+	local function Place(region, x, dy, right)
+		region:ClearAllPoints()
+		if right then
+			region:SetPoint("TOPRIGHT", box, "TOPLEFT", x, -y)
+		else
+			region:SetPoint("TOPLEFT", box, "TOPLEFT", x, -y)
+		end
+		if dy then y = y + dy end
+	end
+
+	-- need chips: "2x hpal" [-][+][x]
+	Place(w.needsLabel, 0)
+	Place(w.needSummary, AREA_W, 16, true)
+	for i, need in ipairs(p.needs) do
+		local chip = w.needChips[i]
+		if not chip then
+			chip = W.Chip(box, {
+				{ text = "-", onClick = function(c) c.item.count = math.max(1, (c.item.count or 1) - 1); Edited() end },
+				{ text = "+", onClick = function(c) c.item.count = math.min(40, (c.item.count or 1) + 1); Edited() end },
+				{ text = "x", onClick = function(c) Remove(P().needs, c.item); Edited() end },
+			})
+			w.needChips[i] = chip
+		end
+		chip.item = need
+		local count = need.count or 1
+		local role = need.spec and RF.SPECS[need.spec] and RF.SPECS[need.spec].role
+		chip:Set(W.ClassColor(need.class) .. (count > 1 and (count .. "x ") or "") .. RF.Comp.NeedLabel(need) .. "|r", C.button,
+			role and function(tex) RF.Skin.SetRoleIcon(tex, role) end or function(tex) RF.Skin.SetClassIcon(tex, need.class) end)
+	end
+	if #p.needs == 0 then
+		w.needEmpty:Show()
+		Place(w.needEmpty, 0, 18)
+	else
+		w.needEmpty:Hide()
+		y = y + W.Flow(w.needChips, #p.needs, box, 0, -y, AREA_W) * 20
+	end
 	local players = 0
 	for _, need in ipairs(p.needs) do players = players + (need.count or 1) end
 	w.needSummary:SetText(string.format("%d need%s, %d player%s", #p.needs, #p.needs == 1 and "" or "s", players, players == 1 and "" or "s"))
 	local problems = RF.Comp.NeedsOverflow(p)
-	w.needWarning:SetText(#problems > 0 and ("|cffff4040" .. table.concat(problems, "; ") .. "|r") or "")
+	w.warning:SetMessages(problems)
+	if #problems > 0 then
+		y = y + 4
+		Place(w.warning, 0, 22)
+	end
+	y = y + 8
 
-	w.capClass:SetValue(sel.capClass)
-	w.capSpec:SetValue(sel.capSpec or "ANY", (not sel.capSpec or sel.capSpec == "ANY") and "Any spec" or RF.SPECS[sel.capSpec].name)
-	if not w.capMax:HasFocus() then w.capMax:SetText(sel.capMax) end
-	w.capList:SetData(p.caps)
+	-- cap chips: "Druid max 3", "rdru max 1"
+	Place(w.capsLabel, 0)
+	Place(w.capSummary, AREA_W, 16, true)
+	w.capSummary:SetText(#p.caps > 0 and (#p.caps .. " cap" .. (#p.caps == 1 and "" or "s")) or "")
+	for i, cap in ipairs(p.caps) do
+		local chip = w.capChips[i]
+		if not chip then
+			chip = W.Chip(box, {
+				{ text = "-", onClick = function(c) c.item.max = math.max(0, (c.item.max or 0) - 1); Edited() end },
+				{ text = "+", onClick = function(c) c.item.max = math.min(40, (c.item.max or 0) + 1); Edited() end },
+				{ text = "x", onClick = function(c) Remove(P().caps, c.item); Edited() end },
+			})
+			w.capChips[i] = chip
+		end
+		chip.item = cap
+		local what = cap.spec and RF.SPECS[cap.spec] and RF.SPECS[cap.spec].short or RF.CLASS_NAMES[cap.class]
+		chip:Set(W.ClassColor(cap.class) .. what .. "|r max " .. (cap.max or 0), C.button,
+			function(tex) RF.Skin.SetClassIcon(tex, cap.class) end)
+	end
+	if #p.caps == 0 then
+		w.capEmpty:Show()
+		Place(w.capEmpty, 0, 18)
+	else
+		w.capEmpty:Hide()
+		y = y + W.Flow(w.capChips, #p.caps, box, 0, -y, AREA_W) * 20
+	end
+	w.area:SetContentHeight(y)
+	if sel.scrollToEnd then
+		sel.scrollToEnd = nil
+		w.area:ScrollTo(w.area.range)
+	end
 
 	w.presetDrop:SetValue(sel.preset, sel.preset or "Select preset")
 end

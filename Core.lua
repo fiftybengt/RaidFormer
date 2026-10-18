@@ -27,7 +27,7 @@ RF.STATUS = {
 RF.HOLDING = { invited = true, waiting = true, accepted = true }
 
 local function Print(msg)
-	DEFAULT_CHAT_FRAME:AddMessage("|cff33ff99RaidFormer|r: " .. tostring(msg))
+	DEFAULT_CHAT_FRAME:AddMessage("|cff33ff99[RF]|r " .. tostring(msg))
 end
 RF.Print = Print
 
@@ -100,6 +100,8 @@ function Core:InitDB()
 	db.aliases = db.aliases or {}           -- word -> spec key / class key / role (/rf alias)
 	db.unknownWords = db.unknownWords or {} -- words from whispers nothing matched (/rf unknown)
 	db.ui = db.ui or {}
+	db.ui.mini = db.ui.mini or { mode = "running" } -- mini bar: running / always / never
+	db.ui.collapsed = db.ui.collapsed or {}       -- folded roster sections
 	db.minimap = db.minimap or { angle = 200, hide = false }
 	-- keep applicant state across /reload, but not across long breaks
 	if db.members and db.membersSavedAt and time() - db.membersSavedAt < 3600 then
@@ -181,7 +183,7 @@ end
 
 function Core:Whisper(name, msg)
 	-- automatic whispers are marked so players can tell it's an addon talking, not you
-	SendChatMessage(RF.SafeChat("[RaidFormer] " .. msg), "WHISPER", nil, name)
+	SendChatMessage(RF.SafeChat("[RF] " .. msg), "WHISPER", nil, name)
 end
 
 function Core:CanInvite()
@@ -223,7 +225,8 @@ function Core:OnWhisper(msg, sender)
 	local lower = msg:lower()
 	-- other leaders' adverts start with LFM (raid icons stripped); an applicant may still say "lfm?" later on
 	local isAdvert = (lower:gsub("{.-}", "")):find("^%s*lfm") ~= nil
-	if isAdvert or lower:find("%[raidformer%]") or IsOwnReply(lower) then return end
+	-- "[RF]" = another RaidFormer answering ("[RaidFormer]" from older versions)
+	if isAdvert or lower:find("%[rf%]") or lower:find("%[raidformer%]") or IsOwnReply(lower) then return end
 
 	local now = GetTime()
 	local m = RF.members[sender]
