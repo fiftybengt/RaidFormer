@@ -11,7 +11,7 @@ produces the same numbers as GearScoreLite).
 Copy (or symlink) the `RaidFormer` folder into `World of Warcraft/Interface/AddOns/`.
 
 ## Quick start
-1. `/rf` (or left-click the minimap button) to open the window. It has three tabs (bottom left):
+1. `/rf` (or click the minimap button) to open the window. It has three tabs (bottom left):
    **Raid** (the dashboard you watch while forming), **Formation** and **Settings**.
 2. **Settings** tab: pick raid, 10/25, Normal/Heroic, your own role (Auto/Tank/Healer/DPS), min
    GearScore, one or more channels (plus Guild/Yell), seconds between posts and extras via
@@ -56,7 +56,7 @@ Copy (or symlink) the `RaidFormer` folder into `World of Warcraft/Interface/AddO
    keeping room for the needs (3 healer specs on the list -> at least 3 heal). If the needs don't
    fit the formation you get a warning in chat (on Start and after a size change). "Load recommended" switches back to the recommended setup, which then
    follows raid changes again. The "Based on: ..." line shows which one you're on.
-4. Click **Start** (title bar, or right-click the minimap button). Watch the **Raid** tab:
+4. Click **Start** (title bar, mini bar or `/rf start`). Watch the **Raid** tab:
    - a progress bar (`TOC25N 18/25`) and what's happening (`next post 23s`, `Raid full`)
    - role chips (`2/2`, `M 5/6`, ...) and need chips (green = in, red = still missing)
    - the LFM line as it's posted right now (click it to edit it in Settings)

@@ -187,7 +187,7 @@ function UI:StateText()
 	return hex(C.good) .. "Running|r - next post " .. math.max(0, math.floor(core.nextPost - GetTime())) .. "s"
 end
 
--- Minimap button: left click toggles window, right click start/stop, drag moves it around the minimap.
+-- Minimap button: click toggles the window, drag moves it around the minimap.
 function UI:CreateMinimapButton()
 	local db = RF.db.minimap
 	local b = CreateFrame("Button", "RaidFormerMinimapButton", Minimap)
@@ -213,15 +213,9 @@ function UI:CreateMinimapButton()
 	end
 	Place()
 
-	b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+	b:RegisterForClicks("LeftButtonUp")
 	b:RegisterForDrag("LeftButton")
-	b:SetScript("OnClick", function(_, button)
-		if button == "RightButton" then
-			if RF.Core.running then RF.Core:Stop() else RF.Core:Start() end
-		else
-			UI:Toggle()
-		end
-	end)
+	b:SetScript("OnClick", function() UI:Toggle() end)
 	b:SetScript("OnDragStart", function(self)
 		self:SetScript("OnUpdate", function()
 			local mx, my = Minimap:GetCenter()
@@ -242,8 +236,7 @@ function UI:CreateMinimapButton()
 		local need = core:NeedText()
 		if need ~= "" then GameTooltip:AddLine("Need: " .. need, 1, 0.82, 0.4, true) end
 		GameTooltip:AddLine(" ")
-		GameTooltip:AddLine("Left-click: open window", 0.7, 0.7, 0.7)
-		GameTooltip:AddLine("Right-click: start/stop", 0.7, 0.7, 0.7)
+		GameTooltip:AddLine("Click: open window", 0.7, 0.7, 0.7)
 		GameTooltip:AddLine("Drag: move button", 0.7, 0.7, 0.7)
 		GameTooltip:Show()
 	end)
