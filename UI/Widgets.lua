@@ -46,7 +46,7 @@ W.ShowTip = ShowTip
 
 function W.Tip(frame, title, lines, anchor)
 	frame.tipTitle, frame.tipLines, frame.tipAnchor = title, lines, anchor
-	if not frame.isFlatButton then
+	if not frame.ownsTip then -- flat buttons and checks show it from their own hover scripts
 		frame:EnableMouse(true)
 		frame:SetScript("OnEnter", ShowTip)
 		frame:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -62,7 +62,7 @@ local KIND_COLOR = { normal = C.button, good = C.goodBg, bad = C.badBg, accent =
 -- kind: nil/"normal", "good", "bad" (Start/Stop) or "accent"; :SetActive(on) for toggles
 function W.Button(parent, text, width, height, onClick, kind)
 	local b = CreateFrame("Button", NextName("Button"), parent)
-	b.isFlatButton = true
+	b.ownsTip = true
 	b:SetWidth(width or 80)
 	b:SetHeight(height or 20)
 	Skin.Backdrop(b, C.button)
@@ -181,6 +181,7 @@ end
 -- Checkbox with its label; the label is clickable too.
 function W.Check(parent, label, onClick)
 	local c = CreateFrame("CheckButton", NextName("Check"), parent)
+	c.ownsTip = true
 	c:SetWidth(14)
 	c:SetHeight(14)
 	Skin.Backdrop(c, C.input)
@@ -241,9 +242,44 @@ end
 -- Menus and dropdowns (native dropdown list, flat trigger button)
 ---------------------------------------------------------------------------
 
--- Shows an EasyMenu list under anchor. items: UIDropDownMenu info tables.
-function W.ShowMenu(menuFrame, items, anchor)
+-- Menus open with EasyMenu, which re-initializes (and so hides) an open list before toggling it -
+-- clicking the same button again would just reopen it. So we track what we opened and close it
+-- ourselves when the same menu is asked for again from the same anchor.
+local openMenu -- { frame =, anchor =, key = } of the last menu we opened
+
+-- key: what the menu is about (a player, a class), so the same button showing someone else
+-- after a scroll opens their menu instead of closing the old one
+local function MenuOpenFor(menuFrame, anchor, key)
+	local list = DropDownList1
+	if not (openMenu and list and list:IsShown()) then return false end
+	if openMenu.frame ~= menuFrame or openMenu.anchor ~= anchor or openMenu.key ~= key then return false end
+	-- the list may since show another addon's menu
+	local current = UIDROPDOWNMENU_OPEN_MENU
+	if current and current ~= menuFrame and current ~= menuFrame:GetName() then return false end
+	return true
+end
+W.MenuOpenFor = MenuOpenFor
+
+-- Shows the menu under anchor, or closes it when it's already open there.
+-- items: UIDropDownMenu info tables. wasOpen: state from before the click (see DropButton).
+function W.ToggleMenu(menuFrame, items, anchor, wasOpen, key)
+	if wasOpen == nil then wasOpen = MenuOpenFor(menuFrame, anchor, key) end
+	if wasOpen then
+		openMenu = nil
+		CloseDropDownMenus()
+		return false
+	end
 	EasyMenu(items, menuFrame, anchor, 0, 0, "MENU")
+	openMenu = { frame = menuFrame, anchor = anchor, key = key }
+	return true
+end
+
+-- Close our menus (window hidden, tab switched).
+function W.CloseMenus()
+	if openMenu then
+		openMenu = nil
+		CloseDropDownMenus()
+	end
 end
 
 local function NewMenuFrame()
@@ -251,12 +287,21 @@ local function NewMenuFrame()
 end
 W.NewMenuFrame = NewMenuFrame
 
-local function DropButton(parent, width, onClick)
-	local b = W.Button(parent, "", width, 20, onClick)
+-- Flat trigger for a menu. onClick(self, wasOpen): wasOpen is taken when the button is pressed,
+-- before anything else can close the list.
+local function DropButton(parent, width, menu, onClick)
+	local b = W.Button(parent, "", width, 20, function(self)
+		local was = self.menuWasOpen -- from this press only
+		self.menuWasOpen = nil
+		if type(was) ~= "boolean" then was = nil end
+		onClick(self, was)
+	end)
+	b:SetScript("OnMouseDown", function(self) self.menuWasOpen = MenuOpenFor(menu, self) end)
 	local fs = b:GetFontString()
 	fs:ClearAllPoints()
 	fs:SetPoint("LEFT", 6, 0)
 	fs:SetPoint("RIGHT", -16, 0)
+	fs:SetHeight(12) -- one line; long texts are cut off instead of spilling over
 	fs:SetJustifyH("LEFT")
 	local arrow = b:CreateTexture(nil, "OVERLAY")
 	arrow:SetTexture("Interface\\Buttons\\Arrow-Down-Up")
@@ -270,7 +315,7 @@ end
 function W.Dropdown(parent, width, getItems, onSelect)
 	local menu = NewMenuFrame()
 	local dd
-	dd = DropButton(parent, width, function(self)
+	dd = DropButton(parent, width, menu, function(self, wasOpen)
 		local list = {}
 		for _, item in ipairs(getItems()) do
 			list[#list + 1] = {
@@ -281,7 +326,7 @@ function W.Dropdown(parent, width, getItems, onSelect)
 				end,
 			}
 		end
-		W.ShowMenu(menu, list, self)
+		W.ToggleMenu(menu, list, self, wasOpen)
 	end)
 	function dd:SetValue(value, text)
 		self.value = value
@@ -299,7 +344,7 @@ end
 -- getItems() -> { { text=, value= } }; isChecked(value) -> bool; onToggle(value)
 function W.MultiDropdown(parent, width, getItems, isChecked, onToggle)
 	local menu = NewMenuFrame()
-	return DropButton(parent, width, function(self)
+	return DropButton(parent, width, menu, function(self, wasOpen)
 		local list = {}
 		for _, item in ipairs(getItems()) do
 			list[#list + 1] = {
@@ -307,7 +352,7 @@ function W.MultiDropdown(parent, width, getItems, isChecked, onToggle)
 				func = function() onToggle(item.value) end,
 			}
 		end
-		W.ShowMenu(menu, list, self)
+		W.ToggleMenu(menu, list, self, wasOpen)
 	end)
 end
 
@@ -596,6 +641,7 @@ function W.Banner(parent, width)
 	f.text = W.Label(f, "", "RaidFormerFontSmall")
 	f.text:SetPoint("LEFT", 6, 0)
 	f.text:SetPoint("RIGHT", -6, 0)
+	f.text:SetHeight(12)
 	SetColor(f.text, C.warn)
 	-- shows the first message, the rest in the tooltip
 	function f:SetMessages(list)

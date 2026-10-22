@@ -44,12 +44,15 @@ local function Clock(seconds)
 	return string.format("%d:%02d", math.floor(seconds / 60), seconds % 60)
 end
 
+-- inspect queue places, rebuilt once per redraw / tick (not per row)
+local queuePos = {}
+
 local function StatusText(m)
 	local C, hex = RF.Skin.C, RF.Skin.Hex
 	if m.status == "waiting" then
 		if m.confirming then return hex(C.warn) .. "Confirming GS...|r" end
 		if m.inspecting then return hex(C.warn) .. "Inspecting...|r" end
-		if m.arrivedAt then return hex(C.warn) .. "In queue #" .. (RF.Inspect:QueuePosition(m.name) or "?") .. "|r" end
+		if m.arrivedAt then return hex(C.warn) .. "In queue #" .. (queuePos[m.name] or "?") .. "|r" end
 		local p = RF.profile
 		if m.joinedAt and not m.manual and p.requireInspect and p.remindInspect and RF.Core.running then
 			return hex(C.warn) .. "Come for inspect|r " .. hex(C.muted) .. Clock(p.inspectTimeout - (GetTime() - m.joinedAt)) .. "|r"
@@ -85,7 +88,7 @@ function RF.UI.ShowSpecMenu(m, anchor)
 			func = function() RF.Core:SetSpec(m.name, key) end,
 		}
 	end
-	EasyMenu(menu, specMenu, anchor, 0, 0, "MENU")
+	RF.W.ToggleMenu(specMenu, menu, anchor, nil, m.name)
 end
 
 -- Right-click on a row: everything you can do with that player.
@@ -113,7 +116,7 @@ function RF.UI.ShowRowMenu(m, anchor)
 		end
 	end
 	menu[#menu + 1] = { text = CANCEL or "Cancel", notCheckable = true, func = function() end }
-	EasyMenu(menu, rowMenu, anchor, 0, 0, "MENU")
+	RF.W.ToggleMenu(rowMenu, menu, anchor, nil, m.name)
 end
 
 ---------------------------------------------------------------------------
@@ -249,6 +252,7 @@ local function Build(page)
 	w.list = W.ScrollList(page, 616, ROWS, ROW_H, function(row)
 		-- section header widgets
 		row.title = W.Label(row, "", "RaidFormerFontHeader")
+		row.title:SetHeight(ROW_H)
 		row.title:SetPoint("LEFT", 4, 0)
 		row.fold = W.Label(row, "", "RaidFormerFontMuted")
 		row.fold:SetPoint("RIGHT", -6, 0)
@@ -265,20 +269,21 @@ local function Build(page)
 		row.classIcon:SetWidth(14)
 		row.classIcon:SetHeight(14)
 		row.classIcon:SetPoint("LEFT", 4, 0)
-		row.name = W.Label(row, "", "RaidFormerFont"); row.name:SetPoint("LEFT", 22, 0); row.name:SetWidth(110)
+		row.name = W.Label(row, "", "RaidFormerFont"); row.name:SetPoint("LEFT", 22, 0); row.name:SetWidth(110); row.name:SetHeight(ROW_H)
 		row.roleIcon = row:CreateTexture(nil, "ARTWORK")
 		row.roleIcon:SetWidth(14)
 		row.roleIcon:SetHeight(14)
 		row.roleIcon:SetPoint("LEFT", 136, 0)
-		row.spec = W.Label(row, "", "RaidFormerFont"); row.spec:SetPoint("LEFT", 154, 0); row.spec:SetWidth(86)
+		row.spec = W.Label(row, "", "RaidFormerFont"); row.spec:SetPoint("LEFT", 154, 0); row.spec:SetWidth(86); row.spec:SetHeight(ROW_H)
 		row.specButton = CreateFrame("Button", nil, row)
 		row.specButton:SetWidth(104)
 		row.specButton:SetHeight(ROW_H)
 		row.specButton:SetPoint("LEFT", 136, 0)
 		row.specButton:SetScript("OnClick", function(self) RF.UI.ShowSpecMenu(row.data, self) end)
 		W.Tip(row.specButton, "Spec", { "Click to set this player's spec." }, "ANCHOR_RIGHT")
-		row.gs = W.Label(row, "", "RaidFormerFont"); row.gs:SetPoint("LEFT", 244, 0); row.gs:SetWidth(44)
+		row.gs = W.Label(row, "", "RaidFormerFont"); row.gs:SetPoint("LEFT", 244, 0); row.gs:SetWidth(44); row.gs:SetHeight(ROW_H)
 		row.status = W.Label(row, "", "RaidFormerFontSmall"); row.status:SetPoint("LEFT", 292, 0); row.status:SetPoint("RIGHT", -4, 0)
+		row.status:SetHeight(ROW_H) -- one line: a long reason is cut off instead of spilling into the next row
 
 		-- hover actions
 		row.kick = W.Button(row, "Kick", 36, 16, function() RF.Core:ManualKick(row.data.name) end, "bad")
@@ -359,6 +364,7 @@ end
 function RF.UI.RosterItems()
 	local bySection = {}
 	for _, s in ipairs(SECTIONS) do bySection[s.key] = {} end
+	queuePos = RF.Inspect:QueuePositions()
 	for _, m in pairs(RF.members) do table.insert(bySection[SectionOf(m)], m) end
 	local items = {}
 	for _, s in ipairs(SECTIONS) do
@@ -366,7 +372,7 @@ function RF.UI.RosterItems()
 		if #list > 0 then
 			table.sort(list, function(a, b)
 				if s.key == "waiting" then
-					local qa, qb = RF.Inspect:QueuePosition(a.name) or 99, RF.Inspect:QueuePosition(b.name) or 99
+					local qa, qb = queuePos[a.name] or 99, queuePos[b.name] or 99
 					if qa ~= qb then return qa < qb end
 				end
 				local oa, ob = ORDER[a.status] or 99, ORDER[b.status] or 99
@@ -390,6 +396,7 @@ local function Status(page)
 		string.format("%s  %d / %d", RF.RaidTag(p.raid, p.size, p.heroic, p.customName), holders, p.size))
 	w.state:SetText(RF.UI:StateText())
 	-- timers and queue positions change every tick: only touch the rows on screen
+	queuePos = RF.Inspect:QueuePositions()
 	for _, row in ipairs(w.list:VisibleRows()) do
 		if not row.data.isHeader and row.data.status == "waiting" then row.status:SetText(StatusText(row.data)) end
 	end

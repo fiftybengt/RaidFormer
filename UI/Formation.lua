@@ -100,7 +100,7 @@ local function ShowClassMenu(class, anchor)
 			func = function() if isCap then RF.UI.AddCap(class, key) else RF.UI.AddNeed(class, key, 1) end end,
 		}
 	end
-	EasyMenu(menu, classMenu, anchor, 0, 0, "MENU")
+	RF.W.ToggleMenu(classMenu, menu, anchor, nil, class .. ":" .. sel.mode)
 end
 
 local function Build(page)

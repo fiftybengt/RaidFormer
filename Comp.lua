@@ -314,7 +314,7 @@ end
 -- The LFM line shows "[n/size]" once this many spots are taken (any raid size).
 Comp.COUNT_FROM = 5
 
--- Announcement styles (Setup tab). The default is "dashes".
+-- Announcement styles (Settings tab). The default is "dashes".
 RF.LFM_STYLES = {
 	{ key = "dashes", name = "Clean dashes" },
 	{ key = "icons", name = "Raid icons" },

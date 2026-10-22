@@ -93,6 +93,7 @@ Copy (or symlink) the `RaidFormer` folder into `World of Warcraft/Interface/AddO
 | Anyone you (or an assist) invite yourself - friends, a refused/removed player you let in anyway | Holds a slot from the moment you invite them. Trusted: counted, inspected for their spec only, never timed out or removed |
 | Rejected but still in the raid (e.g. auto kick off) | Still takes a slot, counted with their inspected spec |
 | You press "Insp" on the Raid tab (hover a player) | Inspected again to confirm GS - also players you let in yourself and with "Require inspect" off. Moved to the uninspected group right away (swapping with someone already inspected if it's full; not with Manual groups); the result is printed in chat: `Name inspected: GS 5612, rsham - accepted` |
+| You press Kick (hover a player, or right-click) | Whisper "Sorry, you were removed from the raid." + kick. Whispering again doesn't invite them back: you're told once in chat, and they stay out until you Accept them, invite them yourself or clear the history |
 | Spec unknown or wrong (friend never came to inspect, bear vs cat) | Click the spec on the Raid tab and pick the right one; for players you let in your choice beats talents |
 | Removed for low GS and whispers again within 5 min | Told their inspected GS, not invited again yet |
 | Whispered spec/class differs from the inspect | Real class/spec is used: kept if it still fits (counted as ret), removed if not. Tick "Kick wrong spec claims" to always remove them |

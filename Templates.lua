@@ -17,7 +17,7 @@ RF.RAIDS = {
 RF.RAID_BY_KEY = {}
 for _, r in ipairs(RF.RAIDS) do RF.RAID_BY_KEY[r.key] = r end
 
--- Quick-add reserve buttons on the Setup tab.
+-- Extras buttons on the Settings tab (Announcement).
 RF.EXTRA_PRESETS = { "B+O+P RES", "BOE RES", "BOE+P RES", "Link best achiev" }
 
 local function round(x) return math.floor(x + 0.5) end
